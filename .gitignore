@@ -1,0 +1,7 @@
+# Compiled parser -- platform/arch-specific, built locally by `make`.
+/parser/*.so
+
+# Node tooling used only when regenerating tree-sitter-remarkup/src/*
+# (grammar.js -> parser.c) during grammar development.
+/tree-sitter-remarkup/node_modules/
+/tree-sitter-remarkup/*.so
