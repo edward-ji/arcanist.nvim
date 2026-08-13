@@ -6,9 +6,6 @@ A Neovim plugin for [Arcanist], a command-line interface to Phorge.
 
 - Neovim 0.9+ (uses `vim.treesitter.start()` / `vim.filetype.add()`).
 - A C compiler (`cc`) on your `PATH`, to build the parser.
-- No dependency on `nvim-treesitter` -- Remarkup isn't in its parser
-  registry, so this plugin builds and loads its own parser directly via
-  Neovim's built-in treesitter support.
 
 ## Installing
 
