@@ -1,3 +1,10 @@
+-- Unlike Markdown, Remarkup renders a single newline as a real line break
+-- instead of folding it back into the paragraph. If 'formatoptions' still
+-- has 't' (or 'a'), typing past 'textwidth' -- or any auto-formatter --
+-- inserts hard newlines that silently change how the text renders. Turn
+-- that off for remarkup buffers; manual `gq` reflow ('q') is left alone.
+vim.opt_local.formatoptions:remove({ 'a', 't' })
+
 -- Start treesitter highlighting for remarkup buffers.
 -- pcall guards the case where the `remarkup` parser hasn't been built yet
 -- (run `make` in the plugin directory), so opening a remarkup buffer
