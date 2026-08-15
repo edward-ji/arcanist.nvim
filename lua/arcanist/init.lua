@@ -1,20 +1,25 @@
 local M = {}
 
+--- @class arcanist.PasteConfig
+--- @field upload boolean Auto-upload files pasted into remarkup buffers.
+--- @field placeholder string Text shown at the cursor while a pasted file
+--- is uploading; `%s` is replaced with the file's basename.
+
 --- @class arcanist.Config
+--- @field paste arcanist.PasteConfig
 
 --- @type arcanist.Config
-local default_config = {}
+local default_config = {
+    paste = {
+        upload = true,
+        placeholder = '{Uploading %s...}',
+    },
+}
 
 M.config = default_config
 
---- Configure arcanist.nvim.
----
---- Currently a no-op placeholder: Remarkup syntax highlighting (ftdetect/,
---- queries/, parser/) works automatically once this plugin is on
---- 'runtimepath' and its parser has been built (`make`) -- calling setup()
---- isn't required for that. This is the conventional entry point for the
---- options future Phorge/Phabricator integration (browsing revisions,
---- posting comments, etc.) will need.
+--- Configure arcanist.nvim. Optional -- every field has a default, so
+--- plugins/buffers work without calling this at all.
 --- @param opts arcanist.Config?
 function M.setup(opts)
     M.config = vim.tbl_deep_extend('force', default_config, opts or {})

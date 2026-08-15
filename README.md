@@ -4,8 +4,10 @@ A Neovim plugin for [Arcanist], a command-line interface to Phorge.
 
 ## Requirements
 
-- Neovim 0.9+ (uses `vim.treesitter.start()` / `vim.filetype.add()`).
+- Neovim 0.10+.
 - A C compiler (`cc`) on your `PATH`, to build the parser.
+- [`arc`](https://we.phorge.it/book/phorge/article/arcanist/) on your `PATH`,
+  configured (`~/.arcrc`) against your Phorge instance.
 
 ## Installing
 

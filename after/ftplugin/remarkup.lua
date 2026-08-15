@@ -18,3 +18,8 @@ if not ok then
         vim.log.levels.WARN
     )
 end
+
+-- Auto-upload files pasted into remarkup buffers.
+if require('arcanist').config.paste.upload then
+    require('arcanist.paste').setup()
+end
