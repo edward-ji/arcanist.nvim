@@ -23,3 +23,7 @@ end
 if require('arcanist').config.paste.upload then
     require('arcanist.paste').setup()
 end
+
+-- Attach the "arcanist" LSP client (see lua/arcanist/lsp.lua for why), so
+-- `gd` on a T123/D456/P789/... reference opens it in a scratch buffer.
+require('arcanist.lsp').setup()
