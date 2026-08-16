@@ -313,6 +313,11 @@ module.exports = grammar({
     // `-` doesn't need escaping as the class's last character (unlike `[`,
     // which tree-sitter's regex parser does require escaped, even inside
     // a class).
-    text: $ => token(prec(PREC.FALLBACK_TEXT, /[^\s*/`#~_!\[\]{}@<>|\\%=-]+|./)),
+    //
+    // Fallback is `[^ \t\n]`, not `.`: `.` also matches space/tab, which
+    // beat `extras` for them (a real token rule always wins over extras)
+    // and let a leading space get glued onto the next token -- e.g. "
+    // D123" instead of " " + "D123".
+    text: $ => token(prec(PREC.FALLBACK_TEXT, /[^\s*/`#~_!\[\]{}@<>|\\%=-]+|[^ \t\n]/)),
   },
 });
