@@ -16,7 +16,9 @@
 --            as-is, or `M.value_source({...})` (below) resolves it against
 --            Phorge's own valid values first. Every field has one -- there
 --            is no separate "how do I tell if this changed" case to keep
---            in sync, since a write behavior answers both questions.
+--            in sync, since a write behavior answers both questions. A
+--            `value_source` write also answers a third: what are the
+--            valid values, for completion -- `M.TEXT` has no such list.
 --
 -- Every declared field is both readable and writable -- there's no
 -- "read-only field" here, because Vim has no way to make a specific line
@@ -25,7 +27,7 @@
 -- settable value) is simply left out of the field list rather than shown
 -- and then rejected.
 
-local conduit = require('arcanist.conduit')
+local source = require('arcanist.source')
 
 local M = {}
 
@@ -55,13 +57,25 @@ local function body_lines(text)
     return trim_trailing(split_lines(text))
 end
 
+--- One completion candidate: `text` is what gets inserted, `detail` (if
+--- any) is a human-readable label shown alongside it -- e.g. a value
+--- source's `text` is already the display name, so it has no separate
+--- `detail`, but a username's `detail` is the person's real name.
+--- @alias arcanist.CompletionItem { text: string, detail: string? }
+
 -- A field's `write` is `{ write_value(raw) -> value, err; changed(loaded,
--- raw) -> boolean }` -- turn parsed text into a transaction value, and
--- decide if it's different enough from the baseline to send. Free text
+-- raw) -> boolean; complete(callback)? }` -- turn parsed text into a
+-- transaction value, decide if it's different enough from the baseline to
+-- send, and (optionally) list the valid values for completion. Free text
 -- (M.TEXT) and value-source fields (M.value_source, below) both satisfy
--- this the same way, so callers (M.write_value/M.changed) never branch on
--- which kind of field they have.
---- @alias arcanist.Write { write_value: fun(raw: string): string?, string?, changed: fun(loaded: string?, raw: string): boolean }
+-- the first two the same way, so callers (M.write_value/M.changed) never
+-- branch on which kind of field they have; `complete` is the one part
+-- that's genuinely absent for free text, so callers of it must check.
+-- `complete` is callback-based (rather than returning a list directly)
+-- because its first call in a session may need to fetch over Conduit, and
+-- that shouldn't block the editor the way `write_value` blocking during
+-- `:w` already does by design.
+--- @alias arcanist.Write { write_value: fun(raw: string): string?, string?, changed: fun(loaded: string?, raw: string): boolean, complete: (fun(callback: fun(items: arcanist.CompletionItem[])))? }
 
 --- @type arcanist.Write
 M.TEXT = {
@@ -73,54 +87,38 @@ M.TEXT = {
     end,
 }
 
---- @type table<string, table[]>
-local source_cache = {}
-
 --- Build a `write` for a field whose valid values come from Phorge itself
 --- rather than a hardcoded list -- e.g. a task's Status/Priority are both
 --- admin-configurable per instance. `method`'s response is fetched once per
---- session (the lists are small and rarely change) and cached, shared
---- across every field that uses the same source. `value`/`display` read
---- one item from the response; `aliases` lists every spelling that should
---- resolve to it (so both the display name and any write keyword work as
---- input).
---- @param source { method: string, display: fun(item: table): string, value: fun(item: table): string, aliases: fun(item: table): string[] }
+--- session (the lists are small and rarely change) and cached via
+--- `arcanist.source`, shared across every field (and completion) that uses
+--- the same source. `value`/`display` read one item from the response;
+--- `aliases` lists every spelling that should resolve to it (so both the
+--- display name and any write keyword work as input).
+--- @param spec { method: string, display: fun(item: table): string, value: fun(item: table): string, aliases: fun(item: table): string[] }
 --- @return arcanist.Write
-function M.value_source(source)
-    local function fetch()
-        if source_cache[source.method] then
-            return source_cache[source.method]
-        end
-        local timeout = require('arcanist').config.conduit_timeout
-        local ok, response, err = conduit.call_sync(source.method, {}, timeout)
-        if not ok then
-            return nil, err
-        end
-        source_cache[source.method] = response.data
-        return response.data
-    end
-
-    -- Resolve typed text against the source's display name or any alias,
+function M.value_source(spec)
+    -- Resolve typed text against the spec's display name or any alias,
     -- trimmed and case-insensitive.
     local function resolve(input)
-        local items, err = fetch()
+        local items, err = source.fetch(spec.method)
         if not items then
             return nil, string.format('failed to fetch valid values: %s', err)
         end
 
         local needle = vim.trim(input):lower()
         for _, item in ipairs(items) do
-            if source.display(item):lower() == needle then
-                return source.value(item)
+            if spec.display(item):lower() == needle then
+                return spec.value(item)
             end
-            for _, alias in ipairs(source.aliases(item)) do
+            for _, alias in ipairs(spec.aliases(item)) do
                 if alias:lower() == needle then
-                    return source.value(item)
+                    return spec.value(item)
                 end
             end
         end
 
-        local valid = vim.tbl_map(source.display, items)
+        local valid = vim.tbl_map(spec.display, items)
         return nil, string.format('"%s" is not valid -- expected one of: %s', input, table.concat(valid, ', '))
     end
 
@@ -130,6 +128,17 @@ function M.value_source(source)
             -- Compared the way resolve() will match it, so retyping the
             -- same value with different casing or spacing isn't a change.
             return loaded == nil or loaded:lower() ~= vim.trim(raw):lower()
+        end,
+        complete = function(callback)
+            source.fetch_async(spec.method, function(items)
+                if not items then
+                    callback({})
+                    return
+                end
+                callback(vim.tbl_map(function(item)
+                    return { text = spec.display(item) }
+                end, items))
+            end)
         end,
     }
 end
@@ -257,6 +266,28 @@ function M.parse(fields, lines)
     close_block()
 
     return values
+end
+
+--- The 'line'-kind field (if any) whose "Label: " prefix starts `line`,
+--- and that prefix's length. Used by completion to know which field's
+--- valid values apply while the cursor sits on that line, and where its
+--- value starts -- unlike M.parse's matching, this cares about the exact
+--- byte offset, so it doesn't trim first. Returns the length alongside
+--- the field (rather than making callers redo `#field.label + 2`) so
+--- there's one place that knows the "Label: " separator is two bytes.
+--- @param fields table[]
+--- @param line string
+--- @return table? field
+--- @return integer? prefix_len
+function M.field_for_line(fields, line)
+    for _, field in ipairs(fields) do
+        if field.kind == 'line' then
+            local prefix = field.label .. ': '
+            if line:sub(1, #prefix) == prefix then
+                return field, #prefix
+            end
+        end
+    end
 end
 
 --- Turn one field's raw parsed text into the value its Conduit transaction

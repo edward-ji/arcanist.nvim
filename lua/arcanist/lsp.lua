@@ -1,17 +1,16 @@
 -- An in-process language server for remarkup buffers, exposing just enough
--- of the LSP surface (textDocument/definition, for now) to resolve T/D
--- object references to "arcanist://" buffers -- reusing whatever `gd`
--- keymap you already have bound to vim.lsp.buf.definition(), instead of a
--- bespoke keymap of our own. Future capabilities (e.g. @mention/#project
--- completion) can register on this same client rather than each inventing
--- their own trigger.
+-- of the LSP surface -- textDocument/definition (T/D object references)
+-- and textDocument/completion (@mention/#project, Status/Priority field
+-- values) -- to reuse whatever `gd` keymap and completion setup you
+-- already have, instead of bespoke keymaps/UI of our own.
 --
 -- Runs in-process (`cmd` is a Lua function, not a subprocess): each
 -- "request" answers by inspecting the *live* client buffer directly via
--- arcanist.reference/treesitter, so there's no document to keep synced --
--- textDocument/didOpen and didChange are accepted and ignored.
+-- arcanist.reference/arcanist.completion, so there's no document to keep
+-- synced -- textDocument/didOpen and didChange are accepted and ignored.
 
 local reference = require('arcanist.reference')
+local completion = require('arcanist.completion')
 
 local M = {}
 
@@ -37,6 +36,7 @@ local function start_server(dispatchers)
                         -- vim.treesitter/nvim_win_get_cursor already use.
                         positionEncoding = 'utf-8',
                         definitionProvider = true,
+                        completionProvider = { triggerCharacters = { '@', '#' } },
                     },
                 })
             elseif method == 'shutdown' then
@@ -56,6 +56,39 @@ local function start_server(dispatchers)
                         },
                     })
                 end
+            elseif method == 'textDocument/completion' then
+                local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+                local pos = params.position
+                -- @mention goes out over Conduit (debounced -- see
+                -- arcanist.completion), so this resolves asynchronously
+                -- even though `request()` itself has already returned.
+                completion.items_at(bufnr, pos.line, pos.character, function(items, start_col, opts)
+                    if not items or #items == 0 then
+                        callback(nil, nil)
+                        return
+                    end
+                    callback(nil, {
+                        -- @mention is a live search: more typing warrants
+                        -- a fresh request. #project/field values are
+                        -- fully cached, so client-side filtering on
+                        -- further keystrokes is already correct.
+                        isIncomplete = opts.live,
+                        items = vim.tbl_map(function(item)
+                            return {
+                                label = item.text,
+                                kind = opts.kind,
+                                detail = item.detail,
+                                textEdit = {
+                                    range = {
+                                        start = { line = pos.line, character = start_col },
+                                        ['end'] = { line = pos.line, character = pos.character },
+                                    },
+                                    newText = item.text,
+                                },
+                            }
+                        end, items),
+                    })
+                end)
             else
                 callback(nil, nil)
             end

@@ -201,6 +201,16 @@ local function resolve_handler(prefix, ref_str, action)
     return handler
 end
 
+--- The handler for `bufnr` if it's a loaded "arcanist://" buffer of a
+--- supported type, else nil. Lets `arcanist.completion` find a buffer's
+--- field schema without its own copy of the URI/HANDLERS lookup.
+--- @param bufnr integer
+--- @return table? handler
+function M.handler_for(bufnr)
+    local prefix = parse_uri(vim.api.nvim_buf_get_name(bufnr))
+    return prefix and HANDLERS[prefix]
+end
+
 --- Fetch `prefix`+`id` synchronously.
 --- @param handler table one of HANDLERS' values
 --- @param id integer
