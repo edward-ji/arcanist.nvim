@@ -7,6 +7,12 @@ local M = {}
 
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
+--- @field conduit_timeout integer Milliseconds to wait on a blocking
+--- Conduit call (i.e. `:w` on an "arcanist://" buffer) before giving up.
+--- @field check_staleness boolean Re-fetch before writing an "arcanist://"
+--- buffer and refuse the write if the object changed on the server since
+--- it was loaded. Costs one extra round-trip per `:w`; set false to trade
+--- that safety for speed.
 
 --- @type arcanist.Config
 local default_config = {
@@ -14,6 +20,8 @@ local default_config = {
         upload = true,
         placeholder = '{Uploading %s...}',
     },
+    conduit_timeout = 10000,
+    check_staleness = true,
 }
 
 M.config = default_config

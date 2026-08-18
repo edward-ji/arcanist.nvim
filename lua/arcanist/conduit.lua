@@ -15,13 +15,19 @@ end
 ---
 --- `arc` reports Conduit-level failures (bad parameters, missing objects)
 --- with exit code 0 and an `error`/`errorMessage` pair in its JSON output,
---- not a nonzero exit code.
+--- not a nonzero exit code. A blocking call that hit its timeout arrives
+--- here as code 124 with empty stderr (`vim.system():wait()`'s own
+--- convention), so that's called out explicitly rather than reported as a
+--- bare exit code.
 --- @param obj vim.SystemCompleted
 --- @return boolean ok
 --- @return any result
 --- @return string? err
 local function decode_result(obj)
     if obj.code ~= 0 then
+        if obj.code == 124 and obj.signal == 9 then
+            return false, nil, 'arc call-conduit timed out'
+        end
         local msg = vim.trim(obj.stderr or '')
         if msg == '' then
             msg = string.format('arc exited with code %d', obj.code)
@@ -68,6 +74,26 @@ function M.call(method, params, callback)
             callback(false, nil, vim.trim(tostring(spawn_err)))
         end)
     end
+end
+
+--- Call a Conduit API method synchronously, blocking until it finishes.
+---
+--- Used by the write path (`:w` on an "arcanist://" buffer), which needs a
+--- definite success/failure before it can decide whether to clear
+--- 'modified' -- the same blocking model netrw uses to write "scp://"
+--- buffers.
+--- @param method string Conduit method name, e.g. "maniphest.edit".
+--- @param params table Method parameters, JSON-encodable.
+--- @param timeout integer Milliseconds.
+--- @return boolean ok
+--- @return any result
+--- @return string? err
+function M.call_sync(method, params, timeout)
+    local ok, obj = pcall(vim.system, cmd(method), { stdin = vim.json.encode(params), text = true })
+    if not ok then
+        return false, nil, vim.trim(tostring(obj))
+    end
+    return decode_result(obj:wait(timeout))
 end
 
 return M
