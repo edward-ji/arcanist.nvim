@@ -1,0 +1,218 @@
+==================
+ATX header
+==================
+== Section ==
+
+---
+
+(document (atx_header content: (text (text))))
+
+==================
+ATX header, empty
+==================
+==
+
+---
+
+(document (atx_header))
+
+==================
+Setext header with = underline (2 chars suffices)
+==================
+Title
+==
+
+---
+
+(document (setext_header content: (text (text))))
+
+==================
+Setext header with -- underline
+==================
+Title
+--
+
+---
+
+(document (setext_header content: (text (text))))
+
+==================
+Setext header with --- underline beats divider
+==================
+Title
+---
+
+---
+
+(document (setext_header content: (text (text))))
+
+==================
+A run of = with content is an ATX header, not a broken setext underline
+==================
+some text
+==flag stuff
+
+---
+
+(document
+  (paragraph (text) (text))
+  (atx_header content: (text (text) (text))))
+
+==================
+Divider
+==================
+---
+
+---
+
+(document (divider))
+
+==================
+Dashed word lines are prose, not stranded dividers
+==================
+run with
+--verbose or -v
+
+---
+
+(document (paragraph (text) (text) (text) (text) (text)))
+
+==================
+Indented code block (spaces and tab)
+==================
+  f(x);
+	 g(y);
+
+---
+
+(document (indented_code_block))
+
+==================
+Fenced code block with blank and backtick-initial lines
+==================
+```
+foo
+
+`tick
+```
+
+---
+
+(document (fenced_code_block content: (code_content)))
+
+==================
+Fenced code block with info string
+==================
+```lang=php, name=x.php
+$x = 1;
+```
+
+---
+
+(document (fenced_code_block info: (info_string) content: (code_content)))
+
+==================
+Fenced one-liner
+==================
+```echo "hi";```
+
+---
+
+(document (fenced_code_block content: (code_content)))
+
+==================
+Fenced block closed at end of a content line
+==================
+```php
+code();```
+
+---
+
+(document (fenced_code_block info: (info_string) (code_content)))
+
+==================
+Literal block
+==================
+%%%
+not [[processed]] at all
+50% ok
+%%%
+
+---
+
+(document (literal_block (literal_content) (literal_content)))
+
+==================
+Literal one-liner
+==================
+%%%quack%%%
+
+---
+
+(document (literal_block (literal_content)))
+
+==================
+Blockquote with nesting and reply attribution
+==================
+> quoted **bold**
+>> nested
+>>! reply
+
+---
+
+(document
+  (blockquote
+    (text (text) (bold (text)))
+    (text (text) (text))
+    (text (text) (text) (text))))
+
+==================
+Callout spans following non-blank lines
+==================
+NOTE: first line
+second line
+
+after blank: new paragraph
+
+---
+
+(document
+  (callout (text (text) (text)) (text (text) (text)))
+  (paragraph (text) (text) (text) (text) (text)))
+
+==================
+Hidden callout form
+==================
+(IMPORTANT) crossing streams
+
+---
+
+(document (callout (text (text) (text))))
+
+==================
+Table with delimiter row and inline cell content
+==================
+| **h1** | T123
+| --- | --
+| a | @joe |
+
+---
+
+(document
+  (table
+    (table_row
+      cell: (table_cell (bold (text)))
+      cell: (table_cell (object_reference)))
+    (table_delimiter_row)
+    (table_row
+      cell: (table_cell (text))
+      cell: (table_cell (mention name: (username))))))
+
+==================
+Embed block on its own line
+==================
+{meme, src=grumpy}
+
+---
+
+(document (embed_block (embed kind: (embed_kind) options: (embed_options))))

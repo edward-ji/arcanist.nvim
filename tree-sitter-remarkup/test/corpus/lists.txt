@@ -1,0 +1,75 @@
+==================
+Unordered and ordered markers
+==================
+- dash
+* star
+# hash
+## hash2
+1. num
+2) paren
+
+---
+
+(document
+  (list
+    (list_item marker: (marker) content: (text (text)))
+    (list_item marker: (marker) content: (text (text)))
+    (list_item marker: (marker) content: (text (text)))
+    (list_item marker: (marker) content: (text (text)))
+    (list_item marker: (marker) content: (text (text)))
+    (list_item marker: (marker) content: (text (text)))))
+
+==================
+Checkboxes: checked, unchecked, starred, empty
+==================
+- [x] done
+- [ ] todo
+- [*] star
+- [] none
+
+---
+
+(document
+  (list
+    (list_item marker: (marker) checkbox: (checkbox) content: (text (text)))
+    (list_item marker: (marker) checkbox: (checkbox) content: (text (text)))
+    (list_item marker: (marker) checkbox: (checkbox) content: (text (text)))
+    (list_item marker: (marker) checkbox: (checkbox) content: (text (text)))))
+
+==================
+A bare checkbox is itself a list marker
+==================
+[ ] milk
+
+---
+
+(document (list (list_item marker: (marker) content: (text (text)))))
+
+==================
+Empty list item
+==================
+- 
+
+---
+
+(document (list (list_item marker: (marker))))
+
+==================
+Marker without trailing space is prose
+==================
+-foo and *bar
+
+---
+
+(document (paragraph (text) (text) (text) (text)))
+
+==================
+Markdown link at line start is not a list
+==================
+[Toil](http://www.trouble.com/x)
+
+---
+
+(document
+  (paragraph
+    (md_link label: (link_label) target: (link_target))))

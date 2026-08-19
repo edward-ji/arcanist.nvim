@@ -24,3 +24,12 @@
 ;; Plain, un-annotated code fences without lang=xxx get no injection --
 ;; there's nothing to inject, and this is intentional so they're left as
 ;; opaque literal content.
+
+;; Phorge also accepts a bare "flavored markdown" language word right after
+;; the fence (```php ... ```), validated against a known-language list in
+;; PhutilRemarkupCodeBlockRule; here any bare word without "=" is handed to
+;; injection.language directly -- an unknown language just injects nothing.
+(fenced_code_block
+  info: (info_string) @injection.language
+  content: (code_content) @injection.content
+  (#not-match? @injection.language "[=,]"))

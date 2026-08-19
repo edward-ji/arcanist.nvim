@@ -30,12 +30,15 @@
 ;; ---------------------------------------------------------------------
 (fenced_code_block "```" @punctuation.delimiter)
 (fenced_code_block info: (info_string) @label)
-(fenced_code_block content: (code_content) @markup.raw.block)
+;; Captured by node type, not via the `content:` field: a closing line with
+;; content before the fence ("quack();```") and the one-line ```form``` are
+;; also code_content nodes, but sit outside the field.
+(fenced_code_block (code_content) @markup.raw.block)
 
 (indented_code_block) @markup.raw.block
 
 (literal_block "%%%" @punctuation.delimiter)
-(literal_block content: (literal_content) @markup.raw.block)
+(literal_block (literal_content) @markup.raw.block)
 
 ;; ---------------------------------------------------------------------
 ;; Blockquotes & callouts
@@ -55,12 +58,13 @@
 ;; ---------------------------------------------------------------------
 (list_item marker: (marker) @markup.list)
 
-;; Default a checkbox to "unchecked", then override to "checked" when its
-;; text actually contains X/x -- #match? / #set! can't branch, so the
-;; more-specific checked pattern simply comes second and wins.
+;; Default a checkbox to "unchecked", then override to "checked" when it
+;; holds any non-space mark ([x], [X], [*], ... -- Phorge checks the mark
+;; is non-whitespace, nothing more) -- #match? / #set! can't branch, so
+;; the more-specific checked pattern simply comes second and wins.
 (checkbox) @markup.list.unchecked
 ((checkbox) @markup.list.checked
-  (#match? @markup.list.checked "\\[[Xx]\\]"))
+  (#match? @markup.list.checked "\\[[^ ]\\]"))
 
 ;; ---------------------------------------------------------------------
 ;; Tables
@@ -71,7 +75,11 @@
 ;; ---------------------------------------------------------------------
 ;; Embeds: {D123}, {icon camera}, {nav ...}, standalone {meme ...} etc.
 ;; ---------------------------------------------------------------------
-(embed "{" @punctuation.bracket)
+;; The opening '{' is lexed as part of `embed_kind` itself (see grammar.js
+;; for why -- it's what keeps `{}` from being misparsed as an embed whose
+;; kind/options run away into unrelated prose later on the line), so
+;; there's no standalone '{' node to capture separately here; only the
+;; closing '}' remains an anonymous token.
 (embed "}" @punctuation.bracket)
 (embed kind: (embed_kind) @function.macro)
 (embed options: (embed_options) @string)
@@ -85,11 +93,10 @@
 (italic) @markup.italic
 (italic "//" @punctuation.delimiter)
 
+;; Atomic tokens (delimiters included in the node, see grammar.js), so
+;; there are no inner backtick/hash nodes to capture separately.
 (monospace) @markup.raw
-(monospace "`" @punctuation.delimiter)
-
 (monospace_alt) @markup.raw
-(monospace_alt "##" @punctuation.delimiter)
 
 (strikethrough) @markup.strikethrough
 (strikethrough "~~" @punctuation.delimiter)
@@ -130,3 +137,6 @@
 
 ;; D123, T123, rXaf3192cd5, ... -- cross-references to other Phorge objects.
 (object_reference) @markup.link
+
+;; {#f00} / {#ff0000} color chips.
+(hex_color) @constant

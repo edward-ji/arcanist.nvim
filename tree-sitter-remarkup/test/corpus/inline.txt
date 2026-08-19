@@ -1,0 +1,309 @@
+==================
+Basic emphasis
+==================
+**bold** //ital// ~~del~~ __und__ !!hi!! `mono` ##mm##
+
+---
+
+(document
+  (paragraph
+    (bold
+      (text))
+    (italic
+      (text))
+    (strikethrough
+      (text))
+    (underline
+      (text))
+    (highlighted
+      (text))
+    (monospace)
+    (monospace_alt)))
+
+==================
+Nested emphasis and lazy matching
+==================
+**bold //nested// more** plain **b2**
+
+---
+
+(document
+  (paragraph
+    (bold
+      (text)
+      (italic
+        (text))
+      (text))
+    (text)
+    (bold
+      (text))))
+
+==================
+Unpaired delimiters are plain text
+==================
+a ** b and C++ // comments and __ und ~~ tilde !! bang
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
+Word-glued backticks stay prose (Phorge requires \B before `)
+==================
+don`t use`them but `real mono` works
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (monospace)
+    (text)))
+
+==================
+Wiki links
+==================
+[[wiki page]] and [[wiki page | name]]
+
+---
+
+(document
+  (paragraph
+    (wiki_link
+      target: (link_target))
+    (text)
+    (wiki_link
+      target: (link_target)
+      label: (link_label))))
+
+==================
+Markdown link needs / or @ in target
+==================
+[1](y) stays text but [a](/x/y) links
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (md_link
+      label: (link_label)
+      target: (link_target))
+    (text)))
+
+==================
+C array indexing is not a link
+==================
+x[0][1](y) is an array
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
+Bare URL in parens, and trailing punctuation excluded
+==================
+see (http://example.com/x) or go to https://example.com/!
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (bare_url
+      url: (url))
+    (text)
+    (text)
+    (text)
+    (text)
+    (bare_url
+      url: (url))
+    (text)))
+
+==================
+Angle URL with weird chars
+==================
+<ssh://example.com/,>
+
+---
+
+(document
+  (paragraph
+    (angle_url
+      url: (url))))
+
+==================
+Short pseudo-protocol does not become italic
+==================
+ab://x//y stays text
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
+Mentions and their boundaries
+==================
+Hey @joe.smith. but mail@lists and l@@k and @@joe stay plain
+
+---
+
+(document
+  (paragraph
+    (text)
+    (mention
+      name: (username))
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
+Project tags, broad charset, no terminal period
+==================
+#c++ and #v1.0 and #tag. but word#tag stays plain
+
+---
+
+(document
+  (paragraph
+    (project_tag
+      name: (project_name))
+    (text)
+    (project_tag
+      name: (project_name))
+    (text)
+    (project_tag
+      name: (project_name))
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
+Object references across applications
+==================
+D123 T123#412 T123#comment-4 F6 M7 B4 Q3 V8 W9 Z10 R12 rABC123 rABC:abcde12
+
+---
+
+(document
+  (paragraph
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)
+    (object_reference)))
+
+==================
+Words that merely look like object references stay words
+==================
+T123abc and W3C and R2D2 and C3PO and ABC-T1
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
+Inline embeds and color chips
+==================
+{D123} and {icon camera color=blue} and {#f00} chip
+
+---
+
+(document
+  (paragraph
+    (embed
+      kind: (embed_kind)
+      options: (embed_options))
+    (text)
+    (embed
+      kind: (embed_kind)
+      options: (embed_options))
+    (text)
+    (hex_color)
+    (text)))
+
+==================
+Stray braces do not derail the line
+==================
+a { b } c {} d { e
+
+---
+
+(document
+  (paragraph
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))

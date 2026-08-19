@@ -44,3 +44,19 @@ f(x, y);
 Text that won't be processed by remarkup
 [[http://www.example.com | example]]
 %%%
+
+NOTE: Callouts now continue onto
+following lines until a blank line.
+
+- [*] any non-digit mark is a checkbox
+- [] even an empty one
+[ ] a checkbox can be the list marker itself
+
+```echo "one-line fence";```
+%%%one-line literal%%%
+
+Unpaired ** delimiters, C++ // comments, x[0][1](y) arrays,
+(http://example.com/in-parens), don`t-style backticks, and
+--flag lines are all plain prose now.
+
+T123#comment-4 B4 Q3 rABC:af3192c and #c++ tags, {#f00} chips.
