@@ -29,6 +29,16 @@ vim.api.nvim_create_autocmd('PackChanged', {
         end
     end,
 })
+
+-- Optional -- every option has a default. These are them.
+require('arcanist').setup({
+    paste = {
+        upload = true,                     -- upload files pasted into remarkup buffers
+        placeholder = '{Uploading %s...}', -- shown while an upload is in flight
+    },
+    conduit_timeout = 10000,               -- ms before a blocking Conduit call gives up
+    check_staleness = true,                -- refuse ":w" if the object changed on the server
+})
 ```
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
@@ -38,6 +48,8 @@ vim.api.nvim_create_autocmd('PackChanged', {
     'edward-ji/arcanist.nvim',
     build = 'make',
     ft = 'remarkup',
+    cmd = { 'ArcLint', 'ArcWrite' },
+    event = { 'BufReadCmd arcanist://*', 'BufWriteCmd arcanist://*' },
 }
 ```
 
