@@ -13,3 +13,9 @@ end
 vim.g.loaded_arcanist = true
 
 require('arcanist.reference').setup()
+
+-- Register ":ArcLint" at startup too. It has nothing to do with remarkup
+-- buffers, so registering it from after/ftplugin would leave it undefined
+-- in exactly the session you'd want it: a normal source file in a working
+-- copy.
+require('arcanist.command').setup()
