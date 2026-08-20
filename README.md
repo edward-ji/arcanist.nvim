@@ -37,7 +37,6 @@ require('arcanist').setup({
         placeholder = '{Uploading %s...}', -- shown while an upload is in flight
     },
     conduit_timeout = 10000,               -- ms before a blocking Conduit call gives up
-    check_staleness = true,                -- refuse ":w" if the object changed on the server
 })
 ```
 

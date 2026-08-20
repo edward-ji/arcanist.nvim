@@ -315,10 +315,11 @@ end
 
 --- Push `lines` (from `bufnr`) to `prefix`+`id` over Conduit. When `bufnr`
 --- is itself the "arcanist://<ref>" buffer being updated, runs the
---- staleness guard first and refreshes its baseline/'modified' afterward.
---- Synchronous: the caller needs a definite success/failure before it can
---- decide whether to clear 'modified', and leaving it set on failure is
---- what keeps Vim's own E37 guard protecting unsaved edits.
+--- staleness guard first (unless `force`) and refreshes its
+--- baseline/'modified' afterward. Synchronous: the caller needs a definite
+--- success/failure before it can decide whether to clear 'modified', and
+--- leaving it set on failure is what keeps Vim's own E37 guard protecting
+--- unsaved edits.
 ---
 --- Only fields that actually changed become transactions -- diffed against
 --- `arcanist_loaded`, the baseline recorded at load (or after the last
@@ -341,7 +342,9 @@ end
 --- @param prefix string
 --- @param id integer
 --- @param lines string[]
-local function push(bufnr, handler, prefix, id, lines)
+--- @param force boolean skip the staleness guard (from `:w!`/`:ArcWrite!`)
+--- and overwrite the server's version even if it changed since load.
+local function push(bufnr, handler, prefix, id, lines, force)
     local ref_name = string.format('%s%d', prefix, id)
     local config = require('arcanist').config
     local is_own = vim.api.nvim_buf_get_name(bufnr) == ('arcanist://' .. ref_name)
@@ -385,7 +388,10 @@ local function push(bufnr, handler, prefix, id, lines)
     -- returns, so this is visible before the wait.
     notify(vim.log.levels.INFO, 'updating ' .. ref_name .. '...')
 
-    if is_own and config.check_staleness then
+    -- Skipped entirely with `force` (":w!"/":ArcWrite!") -- the round-trip
+    -- exists to catch a conflict, and force means overwrite regardless of
+    -- one, so there's nothing to check for.
+    if is_own and not force then
         local obj, err = fetch_sync(handler, id)
         if err then
             notify_err(string.format('failed to check %s for changes: %s', ref_name, err))
@@ -398,11 +404,13 @@ local function push(bufnr, handler, prefix, id, lines)
         if obj.fields.dateModified ~= baseline.date_modified then
             -- `:e` alone won't work here -- the buffer is modified, so Vim
             -- refuses with E37 -- and `:e!` discards the edits, hence the
-            -- nudge to save them off somewhere first.
+            -- nudge to save them off somewhere first. `!` overwrites the
+            -- server's version instead, same as any other Vim write.
             notify_err(
                 string.format(
                     '%s changed on the server since it was loaded. Your edits are still here; '
-                        .. ':w {file} to keep a copy, then :e! to reload',
+                        .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
+                        .. 'to overwrite the server\'s version',
                     ref_name
                 )
             )
@@ -448,7 +456,9 @@ local function push(bufnr, handler, prefix, id, lines)
     end
 end
 
---- Handle `:w` on an "arcanist://<ref>" target.
+--- Handle `:w`/`:w!` on an "arcanist://<ref>" target. `v:cmdbang` (rather
+--- than `args`, which carries no bang info) is how autocmd callbacks learn
+--- whether `!` was given.
 --- @param args table autocmd callback args
 local function write_reference(args)
     local prefix, id = parse_uri(args.match)
@@ -459,10 +469,10 @@ local function write_reference(args)
 
     local bufnr = args.buf
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    push(bufnr, handler, prefix, id, lines)
+    push(bufnr, handler, prefix, id, lines, vim.v.cmdbang == 1)
 end
 
---- Handle ":ArcWrite [ref]". `ref` defaults to the current buffer's own
+--- Handle ":ArcWrite[!] [ref]". `ref` defaults to the current buffer's own
 --- reference if it's an "arcanist://" buffer; otherwise it's required. This
 --- is the way to push when the target's own buffer is already open
 --- elsewhere -- see push()'s doc comment for why `:w` can't do that.
@@ -494,7 +504,7 @@ local function push_command(cmd_args)
     end
 
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    push(bufnr, handler, prefix, id, lines)
+    push(bufnr, handler, prefix, id, lines, cmd_args.bang)
 end
 
 --- Return the "arcanist://<ref>" URI for the object_reference node at the
@@ -565,9 +575,11 @@ function M.setup()
 
     vim.api.nvim_create_user_command('ArcWrite', push_command, {
         nargs = '?',
+        bang = true,
         desc = 'Push the current buffer to a Phorge task/revision (defaults to the current '
             .. 'buffer\'s own reference). Unlike ":w arcanist://T123", works even if that '
-            .. 'reference\'s own buffer is already open elsewhere.',
+            .. 'reference\'s own buffer is already open elsewhere. "!" overwrites even if the '
+            .. 'object changed on the server since it was loaded.',
     })
 end
 
