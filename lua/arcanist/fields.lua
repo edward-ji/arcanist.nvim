@@ -130,7 +130,7 @@ function M.value_source(spec)
             return loaded == nil or loaded:lower() ~= vim.trim(raw):lower()
         end,
         complete = function(callback)
-            source.fetch_async(spec.method, function(items)
+            source.fetch_async(spec.method, nil, function(items)
                 if not items then
                     callback({})
                     return

@@ -114,7 +114,9 @@ end
 --- @param query string
 --- @param callback fun(items: arcanist.CompletionItem[])
 local function project_items(query, callback)
-    source.fetch_async('project.search', function(items)
+    -- The "slugs" attachment, not `fields.slug`: that's only a project's
+    -- primary hashtag, and "#anything" resolves against all of them.
+    source.fetch_async('project.search', { attachments = { slugs = true } }, function(items)
         if not items then
             callback({})
             return
@@ -122,9 +124,11 @@ local function project_items(query, callback)
         local needle = query:lower()
         local matches = {}
         for _, project in ipairs(items) do
-            local slug = project.fields.slug
-            if slug and slug:match(WORD_ONLY_PATTERN) and slug:lower():find(needle, 1, true) then
-                table.insert(matches, { text = slug, detail = project.fields.name })
+            for _, entry in ipairs(vim.tbl_get(project, 'attachments', 'slugs', 'slugs') or {}) do
+                local slug = entry.slug
+                if slug:match(WORD_ONLY_PATTERN) and slug:lower():find(needle, 1, true) then
+                    table.insert(matches, { text = slug, detail = project.fields.name })
+                end
             end
         end
         callback(matches)
