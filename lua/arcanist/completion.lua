@@ -16,6 +16,7 @@
 -- the display name and every hashtag -- so "@linc" finds Abraham Lincoln
 -- and "#quality" finds a project whose only hashtag is "qa".
 
+local arcanist = require('arcanist')
 local conduit = require('arcanist.conduit')
 local reference = require('arcanist.reference')
 local fields = require('arcanist.fields')
@@ -302,15 +303,12 @@ function M.items_at(bufnr, row, col, callback)
     local sigil, query, start_col = sigil_query(line, col)
     if sigil == '@' then
         mention_items(query, function(items)
-            callback(items, start_col, { live = true, kind = KIND.Reference })
+            callback(items, start_col, { live = true, kind = KIND[arcanist.config.completion.mention_kind] })
         end)
         return
     elseif sigil == '#' then
-        -- Folder, not Reference: a project is a container you're filing
-        -- into (Phorge projects nest via parent/milestone), not a pointer
-        -- to one specific thing the way an @mention or T/D reference is.
         project_items(query, function(items)
-            callback(items, start_col, { live = true, kind = KIND.Folder })
+            callback(items, start_col, { live = true, kind = KIND[arcanist.config.completion.project_kind] })
         end)
         return
     end

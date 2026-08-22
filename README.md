@@ -36,6 +36,10 @@ require('arcanist').setup({
         upload = true,                     -- upload files pasted into remarkup buffers
         placeholder = '{Uploading %s...}', -- shown while an upload is in flight
     },
+    completion = {
+        mention_kind = 'Reference', -- CompletionItemKind for @mention items
+        project_kind = 'Module',    -- CompletionItemKind for #project items
+    },
     conduit_timeout = 10000,               -- ms before a blocking Conduit call gives up
 })
 ```
