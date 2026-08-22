@@ -61,7 +61,12 @@ end
 --- any) is a human-readable label shown alongside it -- e.g. a value
 --- source's `text` is already the display name, so it has no separate
 --- `detail`, but a username's `detail` is the person's real name.
---- @alias arcanist.CompletionItem { text: string, detail: string? }
+--- `filter`/`sort` (if any) become LSP filterText/sortText -- the sigil
+--- sources set them so an item found by a non-label word (a real name, a
+--- project name) survives client-side re-filtering and ranks the way
+--- Phorge's typeahead ranks it; value-source items omit both, and the
+--- label defaults apply.
+--- @alias arcanist.CompletionItem { text: string, detail: string?, filter: string?, sort: string? }
 
 -- A field's `write` is `{ write_value(raw) -> value, err; changed(loaded,
 -- raw) -> boolean; complete(callback)? }` -- turn parsed text into a

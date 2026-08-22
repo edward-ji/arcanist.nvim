@@ -24,6 +24,31 @@ local function key_for(method, params)
     return method .. ' ' .. vim.json.encode(params)
 end
 
+--- Conduit `*.search` methods page at 100 results and hand back a
+--- `cursor.after` id for the next page; a single un-paged request
+--- silently truncates any list past 100 (the original "#project only
+--- completes the first hundred projects" bug). Both fetch variants below
+--- follow the cursor until it runs out, so the cache always holds the
+--- full list. Capped at Phorge's own typeahead-browse hard limit (1000
+--- results) as a runaway guard. Methods without cursors (e.g.
+--- maniphest.status.search, which defines no parameters at all -- so
+--- no `after`/`limit` may be sent unless a cursor came back) return no
+--- `cursor` and stop after one page, unchanged.
+local MAX_PAGES = 10
+
+--- Params for the page following `after`, or the caller's own params
+--- verbatim for the first page (see MAX_PAGES on why nothing extra may
+--- be added to it).
+--- @param params table
+--- @param after string|integer|nil
+--- @return table
+local function page_params(params, after)
+    if after == nil then
+        return params
+    end
+    return vim.tbl_extend('force', params, { after = after, limit = 100 })
+end
+
 --- Blocking fetch -- for call sites that need a definite answer before
 --- continuing, i.e. the write path resolving a field's value during `:w`
 --- (already synchronous by design, same as netrw's "scp://" writes).
@@ -52,12 +77,21 @@ function M.fetch(method, params)
         -- The in-flight fetch failed or didn't land in time -- fall
         -- through to a direct attempt of our own.
     end
-    local ok, response, err = conduit.call_sync(method, params, timeout)
-    if not ok then
-        return nil, err
+    local items = {}
+    local after = nil
+    for _ = 1, MAX_PAGES do
+        local ok, response, err = conduit.call_sync(method, page_params(params, after), timeout)
+        if not ok then
+            return nil, err
+        end
+        vim.list_extend(items, response.data)
+        after = vim.tbl_get(response, 'cursor', 'after')
+        if after == nil then
+            break
+        end
     end
-    cache[key] = response.data
-    return response.data
+    cache[key] = items
+    return items
 end
 
 --- Non-blocking fetch -- for interactive call sites (completion) where
@@ -81,20 +115,34 @@ function M.fetch_async(method, params, callback)
     end
     pending[key] = { callback }
 
-    conduit.call(method, params, function(ok, response, err)
+    local function finish(items, err)
         local waiters = pending[key]
         pending[key] = nil
-        if not ok then
-            for _, waiter in ipairs(waiters) do
-                waiter(nil, err)
-            end
-            return
+        if items then
+            cache[key] = items
         end
-        cache[key] = response.data
         for _, waiter in ipairs(waiters) do
-            waiter(response.data)
+            waiter(items, err)
         end
-    end)
+    end
+
+    local items = {}
+    local function fetch_page(after, pages_left)
+        conduit.call(method, page_params(params, after), function(ok, response, err)
+            if not ok then
+                finish(nil, err)
+                return
+            end
+            vim.list_extend(items, response.data)
+            local next_after = vim.tbl_get(response, 'cursor', 'after')
+            if next_after ~= nil and pages_left > 1 then
+                fetch_page(next_after, pages_left - 1)
+            else
+                finish(items)
+            end
+        end)
+    end
+    fetch_page(nil, MAX_PAGES)
 end
 
 return M

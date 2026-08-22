@@ -63,21 +63,38 @@ local function start_server(dispatchers)
                 -- arcanist.completion), so this resolves asynchronously
                 -- even though `request()` itself has already returned.
                 completion.items_at(bufnr, pos.line, pos.character, function(items, start_col, opts)
-                    if not items or #items == 0 then
+                    if not items then
                         callback(nil, nil)
                         return
                     end
+                    -- An *empty* item list is still a real response, not
+                    -- nil: with `isIncomplete = true` it tells the
+                    -- client "nothing yet, but keep re-requesting as
+                    -- more is typed" -- a null response instead lets the
+                    -- client stop querying, so a momentarily-empty live
+                    -- result would kill completion for the rest of the
+                    -- word.
                     callback(nil, {
-                        -- @mention is a live search: more typing warrants
-                        -- a fresh request. #project/field values are
-                        -- fully cached, so client-side filtering on
-                        -- further keystrokes is already correct.
+                        -- The sigil sources are live searches: matching
+                        -- happens server-side per keystroke (see
+                        -- arcanist.completion), so more typing warrants a
+                        -- fresh request. Field values are a complete
+                        -- list, so client-side filtering on further
+                        -- keystrokes is already correct.
                         isIncomplete = opts.live,
                         items = vim.tbl_map(function(item)
                             return {
                                 label = item.text,
                                 kind = opts.kind,
                                 detail = item.detail,
+                                -- `filter`: what the client should match
+                                -- typed text against -- the word that
+                                -- actually matched (e.g. a real name),
+                                -- not the label alone, or the client
+                                -- would drop such items on re-filtering.
+                                -- `sort`: Phorge's result ranking.
+                                filterText = item.filter,
+                                sortText = item.sort,
                                 textEdit = {
                                     range = {
                                         start = { line = pos.line, character = start_col },
