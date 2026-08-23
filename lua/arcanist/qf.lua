@@ -14,7 +14,7 @@ local function notify(level, msg)
 end
 
 --- @param msg string
-local function notify_err(msg)
+function M.notify_err(msg)
     notify(vim.log.levels.ERROR, msg)
 end
 
@@ -157,14 +157,14 @@ function M.run(opts)
                     if msg == '' then
                         msg = string.format('exited with code %d', obj.code)
                     end
-                    notify_err(label .. ': ' .. msg)
+                    M.notify_err(label .. ': ' .. msg)
                 end
                 return
             end
 
             local items, message = opts.parse(stdout)
             if not items then
-                notify_err(label .. ': ' .. message)
+                M.notify_err(label .. ': ' .. message)
                 return
             end
 
@@ -180,7 +180,7 @@ function M.run(opts)
         -- Strip Lua's "<chunk>:<line>: " prefix; the useful part is what
         -- follows (typically ENOENT, i.e. `arc` isn't on PATH).
         local msg = vim.trim(tostring(handle)):gsub('^[^%s]-:%d+:%s*', '')
-        notify_err(label .. ': ' .. msg)
+        M.notify_err(label .. ': ' .. msg)
         return
     end
 

@@ -109,6 +109,60 @@ local function parse_lint(root, stdout)
     return items, tally(counts)
 end
 
+--- Flags this command sets for itself. `arc` lets the last occurrence of a
+--- flag win, so passing either again would hand parse_lint something that
+--- isn't JSON, or divert the results to a file and leave stdout empty --
+--- which reads as a clean run with no findings.
+local RESERVED = {
+    output = true,
+    outfile = true,
+}
+
+--- The reserved flag the user passed, or nil. Scanning stops at "--", past
+--- which everything is a path.
+--- @param fargs string[]
+--- @return string?
+local function reserved_flag(fargs)
+    for _, arg in ipairs(fargs) do
+        if arg == '--' then
+            return nil
+        end
+        local name = arg:match('^%-%-([^=]+)')
+        if name and RESERVED[name] then
+            return '--' .. name
+        end
+    end
+    return nil
+end
+
+--- Order the user's arguments into an `arc` argument list: flags first, then
+--- the paths behind a "--" that protects any path starting with "-".
+--- Hoisting is safe -- `arc` collects non-flag arguments into the workflow's
+--- paths wherever they appear.
+---
+--- Nothing here can tell "--rev HEAD~1" from a flag followed by a path, so a
+--- flag taking a value has to be written "--rev=HEAD~1". A "--" written by
+--- hand passes the list straight through, for when the two-word form is
+--- wanted.
+--- @param fargs string[]
+--- @return string[]
+local function order_args(fargs)
+    if vim.list_contains(fargs, '--') then
+        return fargs
+    end
+
+    local flags, paths = {}, { '--' }
+    for _, arg in ipairs(fargs) do
+        if arg:sub(1, 1) == '-' then
+            flags[#flags + 1] = arg
+        else
+            paths[#paths + 1] = arg
+        end
+    end
+
+    return vim.list_extend(flags, paths)
+end
+
 local installed = false
 
 function M.setup()
@@ -122,13 +176,19 @@ function M.setup()
         -- is what has to happen at startup, and every session that never
         -- lints would otherwise pay for pulling the runner in.
         local qf = require('arcanist.qf')
+
+        local taken = reserved_flag(args.fargs)
+        if taken then
+            qf.notify_err(
+                string.format('ArcLint: %s is set by the plugin and cannot be overridden', taken)
+            )
+            return
+        end
+
         local root = qf.root(vim.api.nvim_get_current_buf())
 
-        -- The terminating "--" goes before the user's paths: run
-        -- noninteractively, `arc` refuses an argument list without it (see
-        -- conduit.lua).
-        local argv = { 'arc', 'lint', '--output', 'json', '--' }
-        vim.list_extend(argv, args.fargs)
+        local argv = { 'arc', 'lint', '--output', 'json' }
+        vim.list_extend(argv, order_args(args.fargs))
 
         qf.run({
             argv = argv,
@@ -143,8 +203,10 @@ function M.setup()
         nargs = '*',
         bang = true,
         complete = 'file',
-        desc = 'Run `arc lint` and load the results into the quickfix list. '
-            .. 'With "!", cancel a run already in progress and start over.',
+        desc = 'Run `arc lint` on the given paths and load the results into the '
+            .. 'quickfix list. Accepts `arc lint` flags, which must use the '
+            .. '"--flag=value" form. With "!", cancel a run already in progress '
+            .. 'and start over.',
     })
 end
 
