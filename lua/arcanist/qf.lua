@@ -143,22 +143,33 @@ function M.run(opts)
 
             local stdout = obj.stdout or ''
 
-            if not stdout:find('%S') then
+            -- `arc` echoes an ArcanistNoEffectException ("No paths are
+            -- lintable.") to stdout and exits 0, so a run that matched
+            -- nothing arrives in prose on the channel the findings use. A
+            -- JSON document can only open with "{" or "[", so output that
+            -- doesn't is certainly not results; output that does still has
+            -- to satisfy the parser.
+            if not stdout:match('^%s*[%[{]') then
                 -- Exit status reports findings, not failure: lint exits 1
                 -- for warnings and 2 for errors (ArcanistLintWorkflow.php:8),
                 -- and a usage error also exits 1. Output is what separates
                 -- them.
-                if obj.code == 0 then
-                    -- Replace rather than leave a stale list lying around.
-                    vim.fn.setqflist({}, ' ', { title = label, items = {} })
-                    notify(vim.log.levels.INFO, label .. ': nothing to report')
-                else
+                if obj.code ~= 0 then
                     local msg = extract_error(obj.stderr)
                     if msg == '' then
                         msg = string.format('exited with code %d', obj.code)
                     end
                     M.notify_err(label .. ': ' .. msg)
+                    return
                 end
+
+                -- Replace rather than leave a stale list lying around.
+                vim.fn.setqflist({}, ' ', { title = label, items = {} })
+                local said = vim.trim(stdout)
+                notify(
+                    vim.log.levels.INFO,
+                    label .. ': ' .. (said ~= '' and said or 'nothing to report')
+                )
                 return
             end
 
