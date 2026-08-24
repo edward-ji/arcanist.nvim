@@ -22,8 +22,14 @@ end
 ---
 --- `arc` logs PHP deprecation warnings and a stack trace to stderr even on
 --- runs that succeed completely, so a non-empty stderr means nothing on its
---- own. Genuine failures show up as "Usage Exception: <msg>" or as the
---- multi-line "EXCEPTION:" dump upload.lua also has to cope with.
+--- own. PhutilErrorHandler writes every one of those as "[<time>] <LABEL>:";
+--- the "EXCEPTION:" dump upload.lua also has to cope with is the member of
+--- that family worth reporting, so it's matched ahead of the rest.
+---
+--- A workflow's own failure arrives as "Usage Exception: <msg>", or as a
+--- message under a bare "Exception" banner -- all that survives of
+--- "<bg:red>** Exception **</bg>" once phutil_console_format strips the bold
+--- and colour it can't send down a pipe.
 --- @param stderr string?
 --- @return string
 local function extract_error(stderr)
@@ -39,7 +45,8 @@ local function extract_error(stderr)
             if exception then
                 return exception
             end
-            local is_noise = line:match('^%[.-%]%s+ERROR%s+%d+:')
+            local is_noise = line == 'Exception'
+                or line:match('^%[.-%]%s+%u+%s*%d*:')
                 or line:match('^#%d+%s')
                 or line:match('^arcanist%(head=')
             if not is_noise then
