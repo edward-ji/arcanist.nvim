@@ -292,14 +292,56 @@ module.exports = grammar({
       seq(field('content', alias($._fenced_oneline, $.code_content)), '\n'),
       seq(
         '```',
-        optional(field('info', alias(/[^\n]+/, $.info_string))),
-        '\n',
+        choice(
+          seq(field('info', alias(/[^\n]+/, $.info_string)), '\n'),
+          // Phorge reads the option list off the FIRST LINE OF THE BLOCK,
+          // which is the fence line's trailing text when it has any and
+          // otherwise the line below it -- so ``` on its own line followed
+          // by `lang=php` is the same block as ```lang=php.
+          seq('\n', optional(seq(
+            field('info', alias($._option_line, $.info_string)),
+            '\n',
+          ))),
+        ),
         field('content', optional(alias(repeat1($._code_line), $.code_content))),
         $._fence_close,
         '\n',
       ),
     ),
     _fenced_oneline: $ => token(seq('```', /[^\n]*/, '```')),
+    // The four options PhutilRemarkupCodeBlockRule knows, in the comma-
+    // separated `key=value` form PhutilSimpleOptions lexes (keys are
+    // case-insensitive; values may be quoted, and only then may they
+    // contain a comma). ONE key it doesn't know voids the whole list and
+    // Phorge keeps the line as code, so the token spells the keys out and
+    // matches all-or-nothing.
+    //
+    // That's also what keeps it from stealing ordinary code lines: it and
+    // `_code_line` below both match "lang=php" and the tie goes to the
+    // rule declared FIRST, while on "lang=php, foo=1" `_code_line` matches
+    // the longer span and wins outright. Declaration order matters here --
+    // moving this below `_code_line` silently turns every option line into
+    // content. (Lexical `prec` would be wrong: tree-sitter consults it
+    // before length, so a tier-1 `_option_line` would take "lang=php" out
+    // of "lang=php, foo=1" and leave ", foo=1" stranded.)
+    //
+    // The fence line stays permissive by contrast: whatever trails ``` is
+    // an info_string, even the option lists Phorge rejects and keeps as
+    // code. Telling those apart up there would put this token, a list of
+    // known language words and a rest-of-line token in one lexer state,
+    // all three ordered against each other -- and the fence line is the
+    // one place the mistake costs nothing worse than a highlighted word
+    // that injects nothing.
+    _option_line: $ => {
+      const key = /lang|name|lines|counterexample/i;
+      const value = /"[^"\n]*"|'[^'\n]*'|[^,="'\n]+/;
+      const option = seq(key, optional(seq(/[ \t]*=[ \t]*/, value)));
+      return token(seq(
+        /[ \t]*/,
+        sepBy1(/[ \t]*,[ \t]*/, option),
+        /[ \t]*/,
+      ));
+    },
     // A content line is any line NOT ending in ``` : either it ends in a
     // non-backtick (with up to two trailing backticks allowed), or it is
     // nothing but one or two backticks. Blank lines are the bare-'\n'

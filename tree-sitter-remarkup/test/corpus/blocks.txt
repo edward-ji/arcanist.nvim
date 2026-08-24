@@ -112,6 +112,30 @@ $x = 1;
 (document (fenced_code_block info: (info_string) content: (code_content)))
 
 ==================
+Fenced code block with options on the line below the fence
+==================
+```
+lang=php, name="x, y.php"
+$x = 1;
+```
+
+---
+
+(document (fenced_code_block info: (info_string) content: (code_content)))
+
+==================
+Fenced code block whose first line has an option key Phorge doesn't know
+==================
+```
+lang=php, foo=1
+$x = 1;
+```
+
+---
+
+(document (fenced_code_block content: (code_content)))
+
+==================
 Fenced one-liner
 ==================
 ```echo "hi";```
