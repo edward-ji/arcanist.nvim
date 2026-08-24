@@ -15,11 +15,10 @@
 ;; `injection.language`.
 
 (fenced_code_block
-  info: (info_string) @_info
+  info: (info_string) @injection.language
   content: (code_content) @injection.content
-  (#match? @_info "lang=")
-  (#gsub! @_info "^.*lang=([%w_+-]+).*$" "%1")
-  (#set! injection.language @_info))
+  (#match? @injection.language "lang=")
+  (#gsub! @injection.language "^.*lang=([%w_+-]+).*$" "%1"))
 
 ;; Plain, un-annotated code fences without lang=xxx get no injection --
 ;; there's nothing to inject, and this is intentional so they're left as
