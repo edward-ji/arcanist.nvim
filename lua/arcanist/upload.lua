@@ -26,7 +26,11 @@ end
 --- "F123", for use as "{F123}").
 --- @param path string Absolute path to a file on disk.
 --- @param callback fun(ok: boolean, monogram_or_err: string)
+--- @return fun() cancel Abandon the upload: kills `arc` if it is still
+--- running, and stops `callback` and its notification from ever firing.
 function M.upload(path, callback)
+    local cancelled = false
+
     --- This is the only place that knows exactly what went wrong, so it
     --- also owns telling the user -- callers just get `ok = false` to know
     --- to clean up after themselves.
@@ -38,11 +42,15 @@ function M.upload(path, callback)
 
     -- vim.system() throws synchronously (rather than calling back) if `arc`
     -- itself can't be spawned at all, e.g. it's missing from PATH.
-    local spawn_ok, spawn_err = pcall(
+    local spawn_ok, res = pcall(
         vim.system,
         { 'arc', 'upload', '--json', '--', path },
         { text = true },
         vim.schedule_wrap(function(obj)
+            if cancelled then
+                return
+            end
+
             if obj.code ~= 0 then
                 local msg = extract_error(obj.stderr)
                 if msg == '' then
@@ -62,8 +70,17 @@ function M.upload(path, callback)
             callback(true, 'F' .. file.id)
         end)
     )
-    if not spawn_ok then
-        fail(vim.trim(tostring(spawn_err)))
+    local proc = spawn_ok and res or nil
+    if not proc then
+        fail(vim.trim(tostring(res)))
+    end
+
+    return function()
+        cancelled = true
+        -- kill() throws if `arc` has already exited on its own.
+        if proc then
+            pcall(proc.kill, proc, 'sigterm')
+        end
     end
 end
 

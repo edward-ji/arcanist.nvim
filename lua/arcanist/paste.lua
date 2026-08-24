@@ -13,6 +13,57 @@ local M = {}
 local ns = vim.api.nvim_create_namespace('arcanist.paste')
 local installed = false
 
+-- Cancel functions for the uploads still in flight, by buffer.
+local in_flight = {} ---@type table<integer, table<integer, function>>
+
+--- Drop every placeholder in `bufnr` and cancel the uploads feeding them.
+---
+--- Bound to BufUnload, which fires on `:bdelete` and on every reload. A
+--- reload is the reason this has to exist: `:e!` re-reads the buffer without
+--- adjusting extmarks, so afterwards they point at stale byte offsets in
+--- content nobody pasted into, and writing a reference there silently
+--- overwrites it.
+--- @param bufnr integer
+local function abandon(bufnr)
+    local tasks = in_flight[bufnr]
+    in_flight[bufnr] = nil
+
+    local cancelled = 0
+    for _, cancel in pairs(tasks) do
+        cancel()
+        cancelled = cancelled + 1
+    end
+
+    if vim.api.nvim_buf_is_valid(bufnr) then
+        vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+    end
+
+    if cancelled > 0 then
+        vim.notify(
+            string.format('arcanist.nvim: buffer unloaded -- cancelled %d upload(s)', cancelled),
+            vim.log.levels.WARN
+        )
+    end
+end
+
+--- @param bufnr integer
+--- @return table<integer, function> tasks
+local function watch(bufnr)
+    local tasks = in_flight[bufnr]
+    if not tasks then
+        tasks = {}
+        in_flight[bufnr] = tasks
+        vim.api.nvim_create_autocmd('BufUnload', {
+            buffer = bufnr,
+            once = true,
+            callback = function()
+                abandon(bufnr)
+            end,
+        })
+    end
+    return tasks
+end
+
 -- Accumulates lines across a streamed paste; nil when no stream is in
 -- progress.
 local pending_lines = nil ---@type string[]?
@@ -134,7 +185,10 @@ local function insert_at_cursor(bufnr, text, mode)
     local start_col = col
     if not is_insert then
         local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ''
-        start_col = math.min(col + 1, #line)
+        -- `col` is a byte offset, so stepping past the character under the
+        -- cursor means stepping its whole width -- "col + 1" splits a
+        -- multibyte character down the middle.
+        start_col = col < #line and (col + vim.str_utf_end(line, col + 1) + 1) or #line
     end
 
     vim.api.nvim_buf_set_text(bufnr, row, start_col, row, start_col, { text })
@@ -158,26 +212,57 @@ local function start_upload(bufnr, path, mode)
         end_col = col + #placeholder,
     })
 
+    local tasks = watch(bufnr)
+    local finished = false
+
     -- upload.upload() always invokes this on the main loop, so it's safe to
     -- touch the buffer directly here.
-    upload.upload(path, function(ok, result)
+    local cancel = upload.upload(path, function(ok, result)
+        finished = true
+        tasks[mark_id] = nil
+
         if not vim.api.nvim_buf_is_valid(bufnr) then
             return
         end
 
         local mark = vim.api.nvim_buf_get_extmark_by_id(bufnr, ns, mark_id, { details = true })
         if vim.tbl_isempty(mark) then
-            -- Placeholder was deleted before the upload finished.
+            -- Deleting the placeholder collapses the extmark to zero width
+            -- rather than removing it, so this only fires if something
+            -- cleared the namespace.
             return
         end
+        -- Dropped before the edit below, which can throw.
+        vim.api.nvim_buf_del_extmark(bufnr, ns, mark_id)
 
-        local srow, scol, details = mark[1], mark[2], mark[3]
+        local srow, scol = mark[1], mark[2]
+        local erow, ecol = mark[3].end_row, mark[3].end_col
+
+        -- Deleting the buffer's last line leaves the collapsed extmark a row
+        -- past the end, which nvim_buf_set_text() rejects.
+        local last = vim.api.nvim_buf_line_count(bufnr) - 1
+        if srow > last then
+            srow = last
+            scol = #(vim.api.nvim_buf_get_lines(bufnr, last, last + 1, false)[1] or '')
+            erow, ecol = srow, scol
+        end
+
         -- On failure, just remove the placeholder; upload.upload() has
         -- already notified about what went wrong.
         local replacement = ok and ('{' .. result .. '}') or ''
-        vim.api.nvim_buf_set_text(bufnr, srow, scol, details.end_row, details.end_col, { replacement })
-        vim.api.nvim_buf_del_extmark(bufnr, ns, mark_id)
+        local edited = pcall(vim.api.nvim_buf_set_text, bufnr, srow, scol, erow, ecol, { replacement })
+        if not edited and ok then
+            vim.notify(
+                string.format('arcanist.nvim: uploaded %s as {%s}, but the buffer could not be edited', path, result),
+                vim.log.levels.WARN
+            )
+        end
     end)
+    -- `arc` failing to spawn at all calls back synchronously, before there
+    -- is anything left to cancel.
+    if not finished then
+        tasks[mark_id] = cancel
+    end
 end
 
 --- Install the paste interception. Idempotent -- safe to call from every
