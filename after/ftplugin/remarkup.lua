@@ -1,9 +1,17 @@
--- Unlike Markdown, Remarkup renders a single newline as a real line break
--- instead of folding it back into the paragraph. If 'formatoptions' still
--- has 't' (or 'a'), typing past 'textwidth' -- or any auto-formatter --
--- inserts hard newlines that silently change how the text renders. Turn
--- that off for remarkup buffers; manual `gq` reflow ('q') is left alone.
+-- Remarkup renders a single newline as a real line break, so Neovim must
+-- never auto-insert one. Setting 'textwidth' to 0 is what does it: with
+-- no wrap column, nothing reflows a line while typing, and the (now
+-- meaningless) 'colorcolumn' ruler goes quiet. Dropping 't'/'a' from
+-- 'formatoptions' is a backstop for when 'textwidth' is set elsewhere.
 vim.opt_local.formatoptions:remove({ 'a', 't' })
+vim.opt_local.textwidth = 0
+vim.opt_local.wrapmargin = 0
+
+-- Not comments -- Remarkup has none. 'comments' is the leader list that
+-- `gq` and `J` preserve when reflowing by hand; keep only the Remarkup
+-- markers, as the markdown ftplugin does: '*'/'-' bullets (trailing space
+-- required, so '**bold**' and '---' are exempt) and '>' quotes.
+vim.opt_local.comments = 'fb:*,fb:-,n:>'
 
 -- Start treesitter highlighting for remarkup buffers.
 -- pcall guards the case where the `remarkup` parser hasn't been built yet
