@@ -140,3 +140,25 @@
 
 ;; {#f00} / {#ff0000} color chips.
 (hex_color) @constant
+
+;; ---------------------------------------------------------------------
+;; Spell checking
+;; ---------------------------------------------------------------------
+;; With treesitter highlighting on, Neovim only spell-checks text under an
+;; @spell capture -- without this `:set spell` does nothing here. Headers,
+;; list items, quotes and callouts alias their whole content line to one
+;; `text` node, so @spell is broad and the non-prose nodes opt back out
+;; with @nospell (which outranks an enclosing @spell).
+(text) @spell
+(link_label) @spell
+
+(monospace) @nospell
+(monospace_alt) @nospell
+(bare_url) @nospell
+(angle_url) @nospell
+(link_target) @nospell
+(mention) @nospell
+(project_tag) @nospell
+(object_reference) @nospell
+(embed) @nospell
+(hex_color) @nospell
