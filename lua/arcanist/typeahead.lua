@@ -5,9 +5,8 @@
 -- username+realname for users and display-name+every-slug for projects,
 -- so passing those same strings here reproduces the web UI's matching.
 --
--- Pure string functions -- no vim.api, no Conduit -- shared by
--- arcanist.completion for both the preloaded (#project) and live
--- (@mention) sources.
+-- Pure string functions -- no vim.api, no Conduit -- shared by both of
+-- arcanist.completion's sigil sources.
 
 local M = {}
 
@@ -53,12 +52,16 @@ end
 --- matches above word matches (the PHASE_PREFIX/PHASE_CONTENT split),
 --- open results above closed (disabled/archived) ones, then
 --- alphabetical.
---- @param prefix boolean whether the primary name starts with the query
+--- @param prefix boolean[] whole-name prefix tiers, most significant first
 --- @param closed boolean disabled user / archived project
 --- @param label string
 --- @return string
 function M.sort_text(prefix, closed, label)
-    return (prefix and '0' or '1') .. (closed and '1' or '0') .. label:lower()
+    local head = ''
+    for _, tier in ipairs(prefix) do
+        head = head .. (tier and '0' or '1')
+    end
+    return head .. (closed and '1' or '0') .. label:lower()
 end
 
 return M

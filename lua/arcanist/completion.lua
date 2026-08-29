@@ -2,25 +2,22 @@
 -- @mention/#project sigils in any remarkup buffer, and Status/Priority
 -- values on their own line inside an editable "arcanist://T*" buffer.
 --
--- Two different data strategies, chosen by the same criterion Phorge's
--- own web typeahead uses (see JX.TypeaheadOnDemandSource vs
--- JX.TypeaheadPreloadedSource): @mention live-queries user.search
--- (debounced so typing doesn't spawn an `arc` process per keystroke);
--- #project has no usable search available via Conduit, so it preloads
--- project.search once per session via arcanist.source, same as
--- Status/Priority already do.
+-- Both sigils search on demand (Prefab.js's JX.TypeaheadOnDemandSource):
+-- each keystroke runs one debounced Conduit search, and only the newest
+-- response is kept. Status/Priority are short fixed lists with no search
+-- behind them, so they preload once via arcanist.source.
 --
 -- Both sources match and rank candidates the way Phorge's typeahead
 -- does (see arcanist.typeahead): the query is a prefix of some *word* of
 -- the candidate -- for users the username and real name, for projects
 -- the display name and every hashtag -- so "@linc" finds Abraham Lincoln
--- and "#quality" finds a project whose only hashtag is "qa".
+-- and "#qual" finds a project named "Quality Assurance", offering its
+-- "qa" hashtag.
 
 local arcanist = require('arcanist')
 local conduit = require('arcanist.conduit')
 local reference = require('arcanist.reference')
 local fields = require('arcanist.fields')
-local source = require('arcanist.source')
 local typeahead = require('arcanist.typeahead')
 
 local KIND = vim.lsp.protocol.CompletionItemKind
@@ -75,11 +72,96 @@ local function ranked(items)
     return items
 end
 
---- Generation counter guarding in-flight @mention queries -- a direct
---- port of TypeaheadOnDemandSource's `lastChange`/`when` check: once a
---- newer keystroke bumps this, an older debounced/in-flight request's
---- result is simply dropped instead of clobbering a fresher one.
+--- The last Conduit failure surfaced to the user. Deduped because a
+--- broken `arc` (wrong `.arcconfig` URI, expired token) would otherwise
+--- notify once per typed character.
+--- @type string?
+local last_failure
+
+--- @param sigil string
+--- @param err string?
+local function report_failure(sigil, err)
+    local msg = string.format('%s completion failed: %s', sigil, err or 'unknown error')
+    if msg ~= last_failure then
+        last_failure = msg
+        vim.notify('arcanist.nvim: ' .. msg, vim.log.levels.WARN)
+    end
+end
+
+--- Generation counter guarding in-flight sigil queries -- a direct port
+--- of TypeaheadOnDemandSource's `lastChange`/`when` check: once a newer
+--- keystroke bumps this, an older debounced/in-flight request's result
+--- is dropped instead of clobbering a fresher one. One counter for both
+--- sigils: only one can be under the cursor, so a new `#` query
+--- invalidates an outstanding `@` one too.
 local generation = 0
+
+--- The `constraints.query` value matching `query` as a substring.
+---
+--- Ferret's `~`, not the per-method name filters: user.search's
+--- `nameLike` is a LIKE over binary-collation columns, so case-sensitive
+--- ("edward" never finds "Edward Ji"), and project.search's `name` is
+--- deprecated. The term is quoted because `~` followed by `-`, `+` or
+--- `=` is a hard Conduit error and both sigil charsets can produce one
+--- ("#-foo"); neither admits a `"`, so the quote cannot be closed early.
+--- @param query string
+--- @return string
+local function substring_query(query)
+    return '~"' .. query .. '"'
+end
+
+-- Phorge's own typeahead page size. The server applies it to the
+-- substring match, before the stricter word-prefix filter, so a very
+-- short query can fill the page with rows that all get filtered away.
+local RESULT_LIMIT = 100
+
+--- Run one debounced Conduit search for a sigil source and hand its
+--- ranked items to `callback`. The empty query never round-trips
+--- (TypeaheadOnDemandSource's own `haveData = {'': true}`); `spec.params`
+--- adds whatever the method needs beyond the search itself.
+--- @param spec { sigil: string, method: string, query: string, params: table?, build: fun(query: string, data: table[]): arcanist.CompletionItem[] }
+--- @param callback fun(items: arcanist.CompletionItem[])
+local function live_items(spec, callback)
+    if spec.query == '' then
+        callback({})
+        return
+    end
+
+    generation = generation + 1
+    local my_generation = generation
+
+    --- A superseded request still owes its caller a response.
+    local function stale()
+        if my_generation == generation then
+            return false
+        end
+        callback({})
+        return true
+    end
+
+    local params = vim.tbl_deep_extend('force', {
+        constraints = { query = substring_query(spec.query) },
+        limit = RESULT_LIMIT,
+    }, spec.params or {})
+
+    vim.defer_fn(function()
+        if stale() then
+            return
+        end
+        conduit.call(spec.method, params, function(ok, response, err)
+            if stale() then
+                return
+            end
+            if not ok then
+                report_failure(spec.sigil, err)
+                callback({})
+                return
+            end
+            last_failure = nil
+            callback(ranked(spec.build(spec.query, response.data or {})))
+        end)
+    end, QUERY_DELAY_MS)
+end
 
 --- The sigil, its typed-so-far query text, and the buffer column the
 --- query starts at -- or nil if `line` doesn't end (up to `col`) with a
@@ -130,49 +212,13 @@ end
 --- @param query string
 --- @param callback fun(items: arcanist.CompletionItem[])
 local function mention_items(query, callback)
-    -- Mirrors TypeaheadOnDemandSource's own `haveData = {'': true}`: the
-    -- empty query never round-trips to the server.
-    if query == '' then
-        callback({})
-        return
-    end
-
-    generation = generation + 1
-    local my_generation = generation
-
-    --- Every request from here needs a response one way or another (empty
-    --- if this generation is no longer the latest); this is that "one way
-    --- or another" for the two points below that can discover staleness.
-    local function stale()
-        if my_generation == generation then
-            return false
-        end
-        callback({})
-        return true
-    end
-
-    vim.defer_fn(function()
-        if stale() then
-            return
-        end
-        -- Ferret fulltext (`query`) with its `~` substring operator, not
-        -- the more obvious `nameLike`: nameLike compiles to a plain LIKE
-        -- over columns with *binary* collation, so it is case-sensitive
-        -- -- "edward" fails to find "Edward Ji" (verified against a
-        -- stock instance), which is most of "some users never show up".
-        -- Ferret terms are normalized, so `~edw` matches any case, over
-        -- the user document's title = "username (Real Name)".
-        local params = { constraints = { query = '~' .. query }, limit = 100 }
-        conduit.call('user.search', params, function(ok, response)
-            if stale() then
-                return
-            end
-            if not ok then
-                callback({})
-                return
-            end
+    live_items({
+        sigil = '@mention',
+        method = 'user.search',
+        query = query,
+        build = function(_, data)
             local items = {}
-            for _, user in ipairs(response.data) do
+            for _, user in ipairs(data) do
                 local username = user.fields.username
                 local real_name = user.fields.realName or ''
                 -- `~` is a *substring* search, one notch looser than
@@ -188,93 +234,87 @@ local function mention_items(query, callback)
                             or real_name,
                         filter = typeahead.graft(query, matched),
                         sort = typeahead.sort_text(
-                            vim.startswith(username:lower(), query:lower()),
+                            { vim.startswith(username:lower(), query:lower()) },
                             closed ~= nil,
                             username
                         ),
                     })
                 end
             end
-            callback(ranked(items))
-        end)
-    end, QUERY_DELAY_MS)
+            return items
+        end,
+    }, callback)
 end
 
---- #project candidates: preloaded project.search list (all pages -- see
---- arcanist.source), matched client-side -- project.search has no
---- non-deprecated substring/prefix constraint (its `name` field is
---- explicitly "(Deprecated.)"; `query` is fulltext/whole-token only), so
---- there's no live search to defer to. Fetched via `source.fetch_async`
---- (not `fetch`) so a cold cache doesn't block the editor the first time
---- `#` is typed in a session -- only the write path needs the blocking
---- variant.
----
---- The query matches against the project *name* as well as every
---- hashtag, exactly like Phorge's project datasource (whose token table
---- is built from display name + all slugs) -- but where Phorge then
---- inserts only the primary slug, every hashtag stays its own candidate
---- here, so "#quality" can complete to either of a project's tags.
+--- One completion item per hashtag of every matching project. Phorge's
+--- project datasource matches the same strings -- display name plus all
+--- slugs -- but inserts only the primary slug; here every hashtag stays
+--- its own candidate, so a project tagged both "#qa" and
+--- "#quality_assurance" offers either.
+--- @param query string
+--- @param data table[]
+--- @return arcanist.CompletionItem[]
+local function project_build(query, data)
+    local needle = query:lower()
+    local items = {}
+    for _, project in ipairs(data) do
+        local name = project.fields.name
+        local archived = project.fields.status == 'archived'
+        local slugs = {}
+        for _, entry in ipairs(vim.tbl_get(project, 'attachments', 'slugs', 'slugs') or {}) do
+            table.insert(slugs, entry.slug)
+        end
+        local matched = typeahead.match(query, vim.list_extend({ name }, slugs))
+        for _, slug in ipairs(matched and slugs or {}) do
+            local ok_slug = slug:match(HASHTAG_WORD)
+                and slug:sub(1, 1) ~= '.'
+                and slug:sub(-1) ~= '.'
+            if ok_slug then
+                -- Prefer the slug's own text as the filter word when it
+                -- matches: the user continuing to type *this label* must
+                -- keep matching this item even if the project-name word
+                -- they started with diverges ("infra..." vs
+                -- "Infrastructure").
+                local slug_prefix = vim.startswith(slug:lower(), needle)
+                table.insert(items, {
+                    text = slug,
+                    detail = archived and (name .. ' (archived)') or name,
+                    filter = typeahead.graft(query, slug_prefix and slug or matched),
+                    -- This hashtag's own prefix outranks the project name's.
+                    sort = typeahead.sort_text(
+                        { slug_prefix, vim.startswith(name:lower(), needle) },
+                        archived,
+                        slug
+                    ),
+                })
+            end
+        end
+    end
+    return items
+end
+
+--- #project candidates: live `project.search` query, debounced. Ferret
+--- indexes a project's slugs alongside its display name, so `~` finds a
+--- project by any of its hashtags.
 --- @param query string
 --- @param callback fun(items: arcanist.CompletionItem[])
 local function project_items(query, callback)
-    -- The "slugs" attachment, not `fields.slug`: that's only a project's
-    -- primary hashtag, and "#anything" resolves against all of them.
-    -- `status = "all"`: project.search silently defaults to
-    -- active-projects-only (its Status field has `setDefault('active')`),
-    -- but Phorge's typeahead completes archived projects too -- greyed
-    -- and sorted last, which the ranking below reproduces.
-    local params = {
-        attachments = { slugs = true },
-        constraints = { status = 'all' },
-    }
-    source.fetch_async('project.search', params, function(projects)
-        if not projects then
-            callback({})
-            return
-        end
-        local needle = query:lower()
-        local items = {}
-        for _, project in ipairs(projects) do
-            local name = project.fields.name
-            local archived = project.fields.status == 'archived'
-            local strings = { name }
-            local slugs = {}
-            for _, entry in ipairs(vim.tbl_get(project, 'attachments', 'slugs', 'slugs') or {}) do
-                table.insert(strings, entry.slug)
-                table.insert(slugs, entry.slug)
-            end
-            local matched = query ~= '' and typeahead.match(query, strings) or nil
-            if query == '' or matched then
-                local detail = archived and (name .. ' (archived)') or name
-                local name_prefix = query == '' or vim.startswith(name:lower(), needle)
-                for _, slug in ipairs(slugs) do
-                    local ok_slug = slug:match(HASHTAG_WORD)
-                        and slug:sub(1, 1) ~= '.'
-                        and slug:sub(-1) ~= '.'
-                    if ok_slug then
-                        -- Prefer the slug's own text as the filter word
-                        -- when it matches: the user continuing to type
-                        -- *this label* must keep matching this item even
-                        -- if the project-name word they started with
-                        -- diverges ("infra..." vs "Infrastructure").
-                        local slug_prefix = vim.startswith(slug:lower(), needle)
-                        local word = slug_prefix and slug or matched
-                        table.insert(items, {
-                            text = slug,
-                            detail = detail,
-                            filter = word and typeahead.graft(query, word) or slug,
-                            sort = typeahead.sort_text(
-                                name_prefix or slug_prefix,
-                                archived,
-                                slug
-                            ),
-                        })
-                    end
-                end
-            end
-        end
-        callback(ranked(items))
-    end)
+    live_items({
+        sigil = '#project',
+        method = 'project.search',
+        query = query,
+        -- The "slugs" attachment, not `fields.slug`: that's only a
+        -- project's primary hashtag, and "#anything" resolves against all
+        -- of them. `status = "all"`: project.search silently defaults to
+        -- active-projects-only (its Status field has
+        -- `setDefault('active')`), but Phorge's typeahead completes
+        -- archived projects too, greyed and sorted last.
+        params = {
+            attachments = { slugs = true },
+            constraints = { status = 'all' },
+        },
+        build = project_build,
+    }, callback)
 end
 
 --- Completion candidates for the cursor at (0-indexed) `row`/`col` in
@@ -288,11 +328,10 @@ end
 --- CompletionItemKind so the menu shows something more specific than the
 --- generic "Text" icon.
 ---
---- Both sigil sources are live: @mention re-queries Conduit, #project
---- re-matches the cached list -- word-prefix matching can't be
---- reproduced by the client's own filterText filtering (one string per
---- item, but many words per candidate), so the server side has to re-run
---- it on every keystroke.
+--- Both sigil sources are live: each re-queries Conduit, and the client
+--- can't take over the filtering as more is typed -- word-prefix
+--- matching runs over many words per candidate, but filterText carries
+--- only one string per item.
 --- @param bufnr integer
 --- @param row integer 0-indexed
 --- @param col integer 0-indexed byte column

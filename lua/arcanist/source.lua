@@ -1,9 +1,8 @@
 -- Fetches a Conduit search method's full result list once per session and
 -- caches it by method and params -- Phorge's own "preloaded typeahead
 -- source" strategy (see JX.TypeaheadPreloadedSource), appropriate here for
--- the same reason Phorge uses it there: small, fixed-ish lists with no live
--- substring search available server-side. Shared by `arcanist.fields`
--- (Status/Priority) and `arcanist.completion` (#project).
+-- the same reason Phorge uses it there: small, fixed-ish lists with no
+-- search behind them. Used by `arcanist.fields` for Status/Priority.
 
 local conduit = require('arcanist.conduit')
 
@@ -26,8 +25,7 @@ end
 
 --- Conduit `*.search` methods page at 100 results and hand back a
 --- `cursor.after` id for the next page; a single un-paged request
---- silently truncates any list past 100 (the original "#project only
---- completes the first hundred projects" bug). Both fetch variants below
+--- silently truncates any list past 100. Both fetch variants below
 --- follow the cursor until it runs out, so the cache always holds the
 --- full list. Capped at Phorge's own typeahead-browse hard limit (1000
 --- results) as a runaway guard. Methods without cursors (e.g.
@@ -84,7 +82,7 @@ function M.fetch(method, params)
         if not ok then
             return nil, err
         end
-        vim.list_extend(items, response.data)
+        vim.list_extend(items, response.data or {})
         after = vim.tbl_get(response, 'cursor', 'after')
         if after == nil then
             break
@@ -133,7 +131,7 @@ function M.fetch_async(method, params, callback)
                 finish(nil, err)
                 return
             end
-            vim.list_extend(items, response.data)
+            vim.list_extend(items, response.data or {})
             local next_after = vim.tbl_get(response, 'cursor', 'after')
             if next_after ~= nil and pages_left > 1 then
                 fetch_page(next_after, pages_left - 1)
