@@ -1,6 +1,6 @@
--- The ":ArcLint" user command. CamelCase matches the ":ArcWrite" already
--- registered by reference.lua (and ":Inspect"/":InspectTree" in Neovim's
--- own runtime).
+-- The ":ArcLint" and ":ArcList" user commands. CamelCase matches the
+-- ":ArcWrite" already registered by reference.lua (and
+-- ":Inspect"/":InspectTree" in Neovim's own runtime).
 
 local M = {}
 
@@ -163,6 +163,60 @@ local function order_args(fargs)
     return vim.list_extend(flags, paths)
 end
 
+--- Complete ":ArcList [query] <type>".
+---
+--- The first word may be either a query or a type; the second offers only
+--- the types accepting the query already typed, so ":ArcList open <Tab>"
+--- offers "tasks" and nothing else (Differential has no "open" builtin).
+--- Types are offered in the plural; type_named() takes either spelling.
+--- @param arg_lead string
+--- @param cmd_line string
+--- @param cursor_pos integer
+--- @return string[]
+local function complete_list(arg_lead, cmd_line, cursor_pos)
+    local reference = require('arcanist.reference')
+
+    local words = vim.split(vim.trim(cmd_line:sub(1, cursor_pos)), '%s+')
+    if arg_lead ~= '' then
+        words[#words] = nil
+    end
+    table.remove(words, 1) -- the command name
+    -- `words` is now exactly the arguments already settled.
+
+    local candidates = {}
+    if #words == 0 then
+        -- Grouped rather than interleaved: the two answer different
+        -- questions, and mixing them makes the menu read as noise.
+        local keys = {}
+        for _, name in ipairs(reference.types()) do
+            local handler = reference.type_named(name).handler
+            candidates[#candidates + 1] = handler.plural
+            for _, key in ipairs(handler.query_keys) do
+                keys[key] = true
+            end
+        end
+        keys = vim.tbl_keys(keys)
+        table.sort(keys)
+        vim.list_extend(candidates, keys)
+    elseif #words == 1 then
+        -- Nothing may follow a type -- it is already the last word -- so a
+        -- first word naming one completes to nothing.
+        if reference.type_named(words[1]) then
+            return {}
+        end
+        for _, name in ipairs(reference.types()) do
+            local handler = reference.type_named(name).handler
+            if vim.list_contains(handler.query_keys, words[1]) then
+                candidates[#candidates + 1] = handler.plural
+            end
+        end
+    end
+
+    return vim.tbl_filter(function(candidate)
+        return vim.startswith(candidate, arg_lead)
+    end, candidates)
+end
+
 local installed = false
 
 function M.setup()
@@ -179,7 +233,7 @@ function M.setup()
 
         local taken = reserved_flag(args.fargs)
         if taken then
-            qf.notify_err(
+            require('arcanist.notify').err(
                 string.format('ArcLint: %s is set by the plugin and cannot be overridden', taken)
             )
             return
@@ -207,6 +261,31 @@ function M.setup()
             .. 'quickfix list. Accepts `arc lint` flags, which must use the '
             .. '"--flag=value" form. With "!", cancel a run already in progress '
             .. 'and start over.',
+    })
+
+    -- Parsed from the end: the type is always the last word, which is what
+    -- makes "[query] <type>" unambiguous.
+    vim.api.nvim_create_user_command('ArcList', function(args)
+        local fargs = args.fargs
+        if #fargs > 2 then
+            require('arcanist.notify').err('ArcList takes at most two arguments: [query] <type>')
+            return
+        end
+
+        -- One argument leaves the query index at 0 and none leaves both
+        -- nil -- which arcanist.list reads as "the default query" and
+        -- "every type", so neither case needs a branch.
+        require('arcanist').list({
+            query_key = fargs[#fargs - 1],
+            type = fargs[#fargs],
+        })
+    end, {
+        nargs = '*',
+        complete = complete_list,
+        desc = 'Browse Phorge tasks and revisions in a picker and open the chosen one. '
+            .. 'Takes "[query] <type>", reading as English -- ":ArcList open tasks", '
+            .. '":ArcList active revisions". The query defaults to "all", and an '
+            .. 'omitted type lists every type.',
     })
 end
 

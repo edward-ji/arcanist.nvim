@@ -42,6 +42,15 @@ require('arcanist').setup({
     },
     conduit_timeout = 10000,               -- ms before a blocking Conduit call gives up
 })
+
+-- Browse Phorge objects and open the one you pick. The picker is whatever
+-- `vim.ui.select` is bound to.
+vim.keymap.set('n', '<leader>rr', function()
+    require('arcanist').list({ type = 'revision' })
+end, { desc = 'Arc revisions' })
+vim.keymap.set('n', '<leader>rt', function()
+    require('arcanist').list({ type = 'task' })
+end, { desc = 'Arc tasks' })
 ```
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
@@ -51,8 +60,20 @@ require('arcanist').setup({
     'edward-ji/arcanist.nvim',
     build = 'make',
     ft = 'remarkup',
-    cmd = { 'ArcLint', 'ArcWrite' },
+    cmd = { 'ArcLint', 'ArcList', 'ArcWrite' },
     event = { 'BufReadCmd arcanist://*', 'BufWriteCmd arcanist://*' },
+    keys = {
+        {
+            '<leader>rr',
+            function() require('arcanist').list({ type = 'revision' }) end,
+            desc = 'Arc revisions',
+        },
+        {
+            '<leader>rt',
+            function() require('arcanist').list({ type = 'task' }) end,
+            desc = 'Arc tasks',
+        },
+    },
 }
 ```
 

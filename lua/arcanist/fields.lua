@@ -273,6 +273,21 @@ function M.parse(fields, lines)
     return values
 end
 
+--- The 'title'-kind field, which every field list has exactly one of.
+--- Read an object's one-line name through this rather than reaching into
+--- it: a task's title lives at `fields.name`, a revision's at
+--- `fields.title`, and knowing that difference is this module's job.
+--- @param fields table[]
+--- @return table
+function M.title_field(fields)
+    for _, field in ipairs(fields) do
+        if field.kind == 'title' then
+            return field
+        end
+    end
+    error('field list has no title field')
+end
+
 --- The 'line'-kind field (if any) whose "Label: " prefix starts `line`,
 --- and that prefix's length. Used by completion to know which field's
 --- valid values apply while the cursor sits on that line, and where its

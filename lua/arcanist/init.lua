@@ -39,4 +39,13 @@ function M.setup(opts)
     M.config = vim.tbl_deep_extend('force', default_config, opts or {})
 end
 
+--- Pick a Phorge task or revision and open it as an "arcanist://" buffer;
+--- see arcanist.list for the options. Re-exported so a keymap needn't name
+--- a submodule, and required lazily -- every remarkup buffer pulls this
+--- module in for `config`, and most sessions never list.
+--- @param opts arcanist.ListOpts?
+function M.list(opts)
+    require('arcanist.list').list(opts)
+end
+
 return M

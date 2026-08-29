@@ -5,18 +5,9 @@
 -- the prompting workflows (`diff`, `land`, `patch`) go through
 -- phutil_console_require_tty() and would need a real terminal.
 
+local notify = require('arcanist.notify')
+
 local M = {}
-
---- @param level integer vim.log.levels.*
---- @param msg string
-local function notify(level, msg)
-    vim.notify('arcanist.nvim: ' .. msg, level)
-end
-
---- @param msg string
-function M.notify_err(msg)
-    notify(vim.log.levels.ERROR, msg)
-end
 
 --- Pull the one useful line out of `arc`'s stderr.
 ---
@@ -104,8 +95,7 @@ function M.run(opts)
 
     if active then
         if not opts.force then
-            notify(
-                vim.log.levels.WARN,
+            notify.warn(
                 string.format(
                     '%s is already running (%s) -- :%s! to cancel it and run this instead',
                     active.label,
@@ -128,7 +118,7 @@ function M.run(opts)
 
     -- The run is asynchronous and takes seconds on a real working copy, so
     -- say something now or the command reads as not having registered.
-    notify(vim.log.levels.INFO, label .. ': ' .. note .. 'running...')
+    notify.info(label .. ': ' .. note .. 'running...')
 
     local record = { label = label, started = vim.uv.hrtime() }
 
@@ -166,23 +156,20 @@ function M.run(opts)
                     if msg == '' then
                         msg = string.format('exited with code %d', obj.code)
                     end
-                    M.notify_err(label .. ': ' .. msg)
+                    notify.err(label .. ': ' .. msg)
                     return
                 end
 
                 -- Replace rather than leave a stale list lying around.
                 vim.fn.setqflist({}, ' ', { title = label, items = {} })
                 local said = vim.trim(stdout)
-                notify(
-                    vim.log.levels.INFO,
-                    label .. ': ' .. (said ~= '' and said or 'nothing to report')
-                )
+                notify.info(label .. ': ' .. (said ~= '' and said or 'nothing to report'))
                 return
             end
 
             local items, message = opts.parse(stdout)
             if not items then
-                M.notify_err(label .. ': ' .. message)
+                notify.err(label .. ': ' .. message)
                 return
             end
 
@@ -190,7 +177,7 @@ function M.run(opts)
             if #items > 0 then
                 vim.cmd.copen()
             end
-            notify(vim.log.levels.INFO, label .. ': ' .. message)
+            notify.info(label .. ': ' .. message)
         end)
     )
 
@@ -198,7 +185,7 @@ function M.run(opts)
         -- Strip Lua's "<chunk>:<line>: " prefix; the useful part is what
         -- follows (typically ENOENT, i.e. `arc` isn't on PATH).
         local msg = vim.trim(tostring(handle)):gsub('^[^%s]-:%d+:%s*', '')
-        M.notify_err(label .. ': ' .. msg)
+        notify.err(label .. ': ' .. msg)
         return
     end
 

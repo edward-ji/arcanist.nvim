@@ -11,9 +11,14 @@
 --
 -- Rendering and parsing are `arcanist.fields`' job -- see that module for
 -- the plain-text format and why every declared field is fully editable.
+--
+-- HANDLERS (below) is the registry of supported object types; adding one
+-- there is what makes every feature, arcanist.list's picker included,
+-- pick it up.
 
 local conduit = require('arcanist.conduit')
 local fields = require('arcanist.fields')
+local notify = require('arcanist.notify')
 
 local M = {}
 
@@ -85,15 +90,31 @@ local PRIORITY = fields.value_source({
 -- `filetype` picks how the buffer gets highlighted; `fields` (see
 -- arcanist.fields) is the document schema.
 --
+-- `type` is the name Phorge itself uses in prose for this kind of object
+-- ("task", "revision" -- not the TASK/DREV PHID constants the API puts in
+-- its `type` field), and `query_keys` lists the builtin queries its search
+-- engine accepts, from its getBuiltinQueryNames(). Both are what
+-- arcanist.list browses by.
+--
+-- `plural` is spelled out rather than suffixed -- not every noun inflects
+-- with an "s", and "repositories" is next on the list below.
+--
+-- The two `query_keys` lists overlap only partly on purpose: Differential
+-- has no "open", "assigned", "subscribed" or "reviewing" builtin, and
+-- asking for one is a hard ERR-BAD-QUERYKEY, not an empty result.
+--
 -- Only T/D for now -- P/F/M/C/r<repo> refs point at pastes, files, macros,
 -- commits, and repositories respectively; left for later.
---- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, fields: table[] }>
+--- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, type: string, plural: string, query_keys: string[], fields: table[] }>
 local HANDLERS = {
     T = {
         search = 'maniphest.search',
         edit = 'maniphest.edit',
         params = by_id,
         filetype = 'remarkup',
+        type = 'task',
+        plural = 'tasks',
+        query_keys = { 'assigned', 'authored', 'subscribed', 'open', 'all' },
         fields = {
             {
                 key = 'title',
@@ -137,6 +158,9 @@ local HANDLERS = {
         edit = 'differential.revision.edit',
         params = by_id,
         filetype = 'remarkup',
+        type = 'revision',
+        plural = 'revisions',
+        query_keys = { 'active', 'authored', 'all' },
         fields = {
             {
                 key = 'title',
@@ -174,17 +198,6 @@ local HANDLERS = {
     },
 }
 
---- @param level integer vim.log.levels.*
---- @param msg string
-local function notify(level, msg)
-    vim.notify('arcanist.nvim: ' .. msg, level)
-end
-
---- @param msg string
-local function notify_err(msg)
-    notify(vim.log.levels.ERROR, msg)
-end
-
 --- Look up `prefix`'s handler, notifying (as `action`, e.g. "open"/"write")
 --- and returning nil if it's unsupported. `ref_str` only names the target
 --- in the error message (e.g. "arcanist://T123").
@@ -195,7 +208,7 @@ end
 local function resolve_handler(prefix, ref_str, action)
     local handler = prefix and HANDLERS[prefix]
     if not handler then
-        notify_err(string.format('cannot %s %s', action, ref_str))
+        notify.err(string.format('cannot %s %s', action, ref_str))
         return nil
     end
     return handler
@@ -209,6 +222,52 @@ end
 function M.handler_for(bufnr)
     local prefix = parse_uri(vim.api.nvim_buf_get_name(bufnr))
     return prefix and HANDLERS[prefix]
+end
+
+--- The by-name view of HANDLERS, built once at load. HANDLERS is keyed by
+--- monogram prefix, which is the one spelling no user ever types.
+--- @type table<string, arcanist.ObjectType>
+local BY_NAME = {}
+
+--- @type string[]
+local TYPE_NAMES = {}
+
+--- @class arcanist.ObjectType
+--- @field handler table The HANDLERS entry.
+--- @field prefix string The monogram prefix it is keyed by ("T"), which a
+--- search result does not carry and callers need to name the object.
+
+for prefix, handler in pairs(HANDLERS) do
+    local entry = { handler = handler, prefix = prefix }
+    BY_NAME[handler.type] = entry
+    BY_NAME[handler.plural] = entry
+    TYPE_NAMES[#TYPE_NAMES + 1] = handler.type
+end
+table.sort(TYPE_NAMES)
+
+--- Every supported object type's singular name, sorted -- so command
+--- completion and "expected one of: ..." messages have a stable order
+--- rather than the hash's.
+--- @return string[]
+function M.types()
+    return TYPE_NAMES
+end
+
+--- The type a user's word names, singular or plural, or nil if it names
+--- none. The caller decides how to complain.
+--- @param name string
+--- @return arcanist.ObjectType?
+function M.type_named(name)
+    return BY_NAME[name]
+end
+
+--- The "arcanist://" URI for an object, so the scheme's spelling stays in
+--- the module whose parse_uri() has to keep matching it.
+--- @param prefix string
+--- @param id integer
+--- @return string
+function M.uri(prefix, id)
+    return string.format('arcanist://%s%d', prefix, id)
 end
 
 --- Fetch `prefix`+`id` synchronously.
@@ -281,7 +340,7 @@ local function load_reference(bufnr, handler, prefix, id)
     vim.bo[bufnr].modifiable = false
     vim.bo[bufnr].readonly = true
     vim.b[bufnr].arcanist_loaded = nil
-    notify(vim.log.levels.INFO, string.format('loading %s%d...', prefix, id))
+    notify.info(string.format('loading %s%d...', prefix, id))
 
     conduit.call(handler.search, handler.params(id), function(ok, response, err)
         if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -293,14 +352,14 @@ local function load_reference(bufnr, handler, prefix, id)
             -- this fetch could be a reload of a previously-loaded buffer --
             -- so it's explicitly cleared rather than left as-is.
             set_lines(bufnr, {}, false)
-            notify_err(string.format('failed to load %s%d: %s', prefix, id, err))
+            notify.err(string.format('failed to load %s%d: %s', prefix, id, err))
             return
         end
 
         local obj = response.data[1]
         if not obj then
             set_lines(bufnr, {}, false)
-            notify_err(string.format('%s%d not found', prefix, id))
+            notify.err(string.format('%s%d not found', prefix, id))
             return
         end
 
@@ -351,13 +410,13 @@ local function push(bufnr, handler, prefix, id, lines, force)
     local baseline = is_own and vim.b[bufnr].arcanist_loaded or nil
 
     if is_own and not baseline then
-        notify_err(string.format('%s has not loaded successfully; nothing to update', ref_name))
+        notify.err(string.format('%s has not loaded successfully; nothing to update', ref_name))
         return
     end
 
     local values, parse_err = fields.parse(handler.fields, lines)
     if not values then
-        notify_err(string.format('failed to update %s: %s', ref_name, parse_err))
+        notify.err(string.format('failed to update %s: %s', ref_name, parse_err))
         return
     end
 
@@ -367,7 +426,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
         if raw ~= nil and fields.changed(field, baseline and baseline.values[field.key], raw) then
             local value, err = fields.write_value(field, raw)
             if not value then
-                notify_err(string.format('failed to update %s: %s', ref_name, err))
+                notify.err(string.format('failed to update %s: %s', ref_name, err))
                 return
             end
             table.insert(transactions, { type = field.key, value = value })
@@ -375,7 +434,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
     end
 
     if #transactions == 0 then
-        notify(vim.log.levels.INFO, ref_name .. ': no changes to update')
+        notify.info(ref_name .. ': no changes to update')
         if is_own then
             vim.bo[bufnr].modified = false
         end
@@ -386,7 +445,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
     -- after. nvim_echo (what vim.notify's default handler calls) flushes to
     -- the message area synchronously, before this function's own call
     -- returns, so this is visible before the wait.
-    notify(vim.log.levels.INFO, 'updating ' .. ref_name .. '...')
+    notify.info('updating ' .. ref_name .. '...')
 
     -- Skipped entirely with `force` (":w!"/":ArcWrite!") -- the round-trip
     -- exists to catch a conflict, and force means overwrite regardless of
@@ -394,11 +453,11 @@ local function push(bufnr, handler, prefix, id, lines, force)
     if is_own and not force then
         local obj, err = fetch_sync(handler, id)
         if err then
-            notify_err(string.format('failed to check %s for changes: %s', ref_name, err))
+            notify.err(string.format('failed to check %s for changes: %s', ref_name, err))
             return
         end
         if not obj then
-            notify_err(string.format('%s no longer exists', ref_name))
+            notify.err(string.format('%s no longer exists', ref_name))
             return
         end
         if obj.fields.dateModified ~= baseline.date_modified then
@@ -406,7 +465,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
             -- refuses with E37 -- and `:e!` discards the edits, hence the
             -- nudge to save them off somewhere first. `!` overwrites the
             -- server's version instead, same as any other Vim write.
-            notify_err(
+            notify.err(
                 string.format(
                     '%s changed on the server since it was loaded. Your edits are still here; '
                         .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
@@ -423,12 +482,12 @@ local function push(bufnr, handler, prefix, id, lines, force)
         transactions = transactions,
     }, config.conduit_timeout)
     if not ok then
-        notify_err(string.format('failed to update %s: %s', ref_name, err))
+        notify.err(string.format('failed to update %s: %s', ref_name, err))
         return
     end
 
     if not is_own then
-        notify(vim.log.levels.INFO, 'updated ' .. ref_name)
+        notify.info('updated ' .. ref_name)
         return
     end
 
@@ -442,11 +501,10 @@ local function push(bufnr, handler, prefix, id, lines, force)
             date_modified = obj.fields.dateModified,
         }
         vim.bo[bufnr].modified = false
-        notify(vim.log.levels.INFO, 'updated ' .. ref_name)
+        notify.info('updated ' .. ref_name)
     else
         vim.bo[bufnr].modified = false
-        notify(
-            vim.log.levels.WARN,
+        notify.warn(
             string.format(
                 'updated %s, but could not refresh it (%s); :e to reload',
                 ref_name,
@@ -486,14 +544,14 @@ local function push_command(cmd_args)
         prefix, id = parse_ref(ref_arg)
         target = 'arcanist://' .. ref_arg
         if not prefix then
-            notify_err('invalid reference: ' .. ref_arg)
+            notify.err('invalid reference: ' .. ref_arg)
             return
         end
     else
         target = vim.api.nvim_buf_get_name(bufnr)
         prefix, id = parse_uri(target)
         if not prefix then
-            notify_err(':ArcWrite needs a reference (current buffer is not an "arcanist://" buffer)')
+            notify.err(':ArcWrite needs a reference (current buffer is not an "arcanist://" buffer)')
             return
         end
     end
@@ -537,7 +595,7 @@ function M.at(bufnr, row, col)
         return nil
     end
 
-    return string.format('arcanist://%s%d', prefix, id)
+    return M.uri(prefix, id)
 end
 
 local installed = false
