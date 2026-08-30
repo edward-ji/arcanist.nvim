@@ -137,6 +137,8 @@ A task looks like this: >
     The nightly export times out on large accounts.
 
     See {T98} for the original report.
+
+    Maniphest Task: T123
 <
 A revision looks like this: >
 
@@ -147,6 +149,8 @@ A revision looks like this: >
 
     Test Plan:
     Ran the exporter against staging with and without the flag.
+
+    Differential Revision: D456
 <
 RULES
 
@@ -164,6 +168,9 @@ Delete a field's label and that field is left untouched on the server. This is
 the way to save an edit to one field without touching the others, though it is
 rarely needed -- unchanged fields are not sent in the first place.
 
+The last field names the object rather than describing it, and is the one
+field never sent back. See |arcanist-identity|.
+
 STATUS AND PRIORITY
 
 These accept either the name shown ("Needs Triage") or any keyword Phorge
@@ -175,6 +182,55 @@ list.
 Revisions have no editable Status, deliberately. Phorge moves a revision's
 status through accept, reject, abandon and the like, not by setting a value,
 so the field is left out rather than shown and then rejected on write.
+
+THE IDENTITY LINE                                          *arcanist-identity*
+
+The last field of every document says which object it is: >
+
+    Maniphest Task: T123
+    Differential Revision: D456
+<
+It is a field like any other, and behaves like one -- a line of your own
+starting "Maniphest Task:" ends the block field above it, exactly as
+"Status:" would. The difference is that it is never sent. An object's name is
+not a thing you can set, so editing the line renames nothing; what it changes
+is which object the file claims to be.
+
+That claim is what lets an ordinary file go back where it came from: >vim
+
+    :edit arcanist://T123
+    :saveas /tmp/t123.remarkup      " now an ordinary file
+    :write                          " cheap, local, as often as you like
+    :ArcWrite                       " reads the last line, pushes T123
+<
+Pushing to some other object is refused rather than done quietly. Delete the
+line to allow it.
+
+FINDING THE TARGET
+
+Deciding which object a file names has to happen before there is any field
+list to read it with, and Phorge's own words do not distinguish "this file is
+T123" from "this revision references T123". So `:ArcWrite` is narrow about it.
+Four rules:
+
+    1. Only the last non-blank line is looked at -- where this plugin puts
+       it, and where `arc` puts "Differential Revision".
+    2. The label is exactly "Maniphest Task:" or "Differential Revision:".
+       The plural "Maniphest Tasks:" is a revision's list of referenced
+       tasks and names nothing -- which is what keeps `:ArcWrite` in an
+       `arc diff` buffer from pushing a commit message into whatever task it
+       happens to mention.
+    3. It names one object. "Maniphest Task: T1, T2" is a reference.
+    4. The monogram decides the type, so "Differential Revision: T123" is an
+       error rather than a guess.
+
+A revision may be named by the URI `arc` writes for it
+("https://your.phorge/D456") as well as by the monogram.
+
+One case gets this wrong: a revision message you typed yourself, using the
+singular "Maniphest Task:" as its last line, with no "Differential Revision:"
+line, reads as a task. Nothing `arc` writes looks like that -- it always
+spells the label in the plural.
 
 ==============================================================================
 5. COMPLETION AND GO-TO                                         *arcanist-lsp*
@@ -301,8 +357,10 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
 ------------------------------------------------------------------------------
                                                                    *:ArcWrite*
 :ArcWrite[!] [ref]      Push the current buffer to a Phorge object. [ref] is a
-                        monogram like "T123"; without it, the current buffer's
-                        own reference is used.
+                        monogram like "T123". Without it, the target is the
+                        buffer's own reference if it is an "arcanist://" one,
+                        and otherwise whatever its last line names -- see
+                        |arcanist-identity|.
 
                         With no [ref] -- pushing an "arcanist://" buffer to
                         itself -- this behaves exactly like `:w`: only changed
@@ -323,6 +381,12 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
                         against, so every field it contains is sent, and the
                         conflict guard does not run. A field whose label you
                         leave out is still left alone.
+
+                        A [ref] that contradicts the buffer's identity line is
+                        refused, so a copy cannot be pushed over the object it
+                        was copied from. "!" does not override it -- it means
+                        "ignore the conflict guard" -- but deleting the line
+                        does.
 
 ==============================================================================
 8. CONFIGURATION                                             *arcanist-config*
@@ -425,6 +489,17 @@ Every message the plugin prints is prefixed "arcanist.nvim:".
 "T123 has not loaded successfully; nothing to update" ~
     The buffer never received content, so there is nothing to diff a write
     against. `:e!` to try fetching again.
+
+":ArcWrite needs a reference: this is not an "arcanist://" buffer, and its ~
+last line does not name a Phorge object" ~
+    Nothing says what this text is. Either name the object -- `:ArcWrite T123`
+    -- or give the file an identity line; see |arcanist-identity| for what
+    counts as one. A "Maniphest Tasks:" line, plural, does not: that is a
+    revision's list of referenced tasks.
+
+"T124: this text is labelled T123" ~
+    You asked to push a copy of one object over a different one. Delete the
+    identity line if that is really what you meant.
 
 "arc call-conduit timed out" ~
     A blocking request took longer than `conduit_timeout`. Raise it -- see

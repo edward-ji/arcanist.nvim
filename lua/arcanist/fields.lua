@@ -8,24 +8,25 @@
 --            'line' (value on the label's own line), or 'block' (label
 --            alone, value beneath it, any number of lines).
 --   `label`  the buffer text ("Status:"); absent only for 'title'.
---   `read(obj.fields)`  pulls the displayed value out of the fetched
+--   `read(obj.fields, obj)`  pulls the displayed value out of the fetched
 --            object. Shown the way Phorge's web UI shows it ("Needs
 --            Triage", not the `triage` keyword the edit API wants) --
---            free, since the display name is already in the object.
+--            free, since the display name is already in the object. The
+--            whole object comes second, for the values that aren't among
+--            its `fields` -- an id is a sibling of them, not one.
 --   `write`  turns parsed text into a transaction value: `M.TEXT` sends it
 --            as-is, or `M.value_source({...})` (below) resolves it against
---            Phorge's own valid values first. Every field has one -- there
---            is no separate "how do I tell if this changed" case to keep
---            in sync, since a write behavior answers both questions. A
---            `value_source` write also answers a third: what are the
---            valid values, for completion -- `M.TEXT` has no such list.
+--            Phorge's own valid values first. One write answers both "what
+--            does this send" and "has it changed", so there is no separate
+--            change-detection case to keep in sync. A `value_source` write
+--            also answers a third: what are the valid values, for
+--            completion -- `M.TEXT` has no such list. Absent on a field
+--            that names the object rather than describing it, which is
+--            therefore never sent.
 --
--- Every declared field is both readable and writable -- there's no
--- "read-only field" here, because Vim has no way to make a specific line
--- unmodifiable anyway. A field Phorge itself has no way to write (a
--- revision's Status, which only moves via accept/reject/abandon, never a
--- settable value) is simply left out of the field list rather than shown
--- and then rejected.
+-- A field Phorge itself has no way to write (a revision's Status, which
+-- only moves via accept/reject/abandon, never a settable value) is left
+-- out of the field list rather than shown and then rejected.
 
 local source = require('arcanist.source')
 
@@ -170,7 +171,7 @@ function M.render(fields, obj)
             end
         end
 
-        local value = field.read(f)
+        local value = field.read(f, obj)
         if field.kind == 'title' then
             table.insert(lines, value or '')
         elseif field.kind == 'line' then

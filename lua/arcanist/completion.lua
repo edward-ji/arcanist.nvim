@@ -362,7 +362,7 @@ function M.items_at(bufnr, row, col, callback)
     -- keep a multi-return call's first value, which would silently drop
     -- `prefix_len` here.
     local field, prefix_len = fields.field_for_line(handler.fields, line)
-    if not (field and field.write.complete) or col < prefix_len then
+    if not (field and field.write and field.write.complete) or col < prefix_len then
         callback(nil)
         return
     end

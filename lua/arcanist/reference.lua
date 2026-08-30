@@ -90,6 +90,9 @@ local PRIORITY = fields.value_source({
 -- `filetype` picks how the buffer gets highlighted; `fields` (see
 -- arcanist.fields) is the document schema.
 --
+-- `identity` is the label naming this type on a document's last line,
+-- spelled the way Phorge spells it.
+--
 -- `type` is the name Phorge itself uses in prose for this kind of object
 -- ("task", "revision" -- not the TASK/DREV PHID constants the API puts in
 -- its `type` field), and `query_keys` lists the builtin queries its search
@@ -105,7 +108,7 @@ local PRIORITY = fields.value_source({
 --
 -- Only T/D for now -- P/F/M/C/r<repo> refs point at pastes, files, macros,
 -- commits, and repositories respectively; left for later.
---- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, type: string, plural: string, query_keys: string[], fields: table[] }>
+--- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, type: string, plural: string, identity: string, query_keys: string[], fields: table[] }>
 local HANDLERS = {
     T = {
         search = 'maniphest.search',
@@ -114,6 +117,7 @@ local HANDLERS = {
         filetype = 'remarkup',
         type = 'task',
         plural = 'tasks',
+        identity = 'Maniphest Task',
         query_keys = { 'assigned', 'authored', 'subscribed', 'open', 'all' },
         fields = {
             {
@@ -160,6 +164,7 @@ local HANDLERS = {
         filetype = 'remarkup',
         type = 'revision',
         plural = 'revisions',
+        identity = 'Differential Revision',
         query_keys = { 'active', 'authored', 'all' },
         fields = {
             {
@@ -232,6 +237,10 @@ local BY_NAME = {}
 --- @type string[]
 local TYPE_NAMES = {}
 
+--- Identity label -> the monogram prefix it names ("Maniphest Task" -> "T").
+--- @type table<string, string>
+local IDENTITY = {}
+
 --- @class arcanist.ObjectType
 --- @field handler table The HANDLERS entry.
 --- @field prefix string The monogram prefix it is keyed by ("T"), which a
@@ -242,6 +251,18 @@ for prefix, handler in pairs(HANDLERS) do
     BY_NAME[handler.type] = entry
     BY_NAME[handler.plural] = entry
     TYPE_NAMES[#TYPE_NAMES + 1] = handler.type
+    IDENTITY[handler.identity] = prefix
+
+    -- Every document ends with the line naming what it is: the same field
+    -- every time bar the label, and with no `write`, so it is never sent.
+    table.insert(handler.fields, {
+        key = 'identity',
+        kind = 'line',
+        label = handler.identity,
+        read = function(_, obj)
+            return string.format('%s%d', prefix, obj.id)
+        end,
+    })
 end
 table.sort(TYPE_NAMES)
 
@@ -306,6 +327,40 @@ local function set_lines(bufnr, lines, editable)
     end
 end
 
+--- Make `bufnr` an "arcanist://" buffer, or (`scheme = false`) an ordinary
+--- file buffer again.
+---
+--- A swapfile can't do its job here and actively gets in the way: the
+--- BufReadCmd repopulates the buffer from the server on every open, so
+--- recovered content is overwritten the moment the buffer opens, while a
+--- swapfile left behind by a crash makes the next open fail with E325
+--- against a "file" that "CANNOT BE FOUND". netrw disables them for its
+--- remote buffers for the same reason.
+---
+--- 'bufhidden' keeps the buffer loaded when you navigate away -- cursor,
+--- scroll and buffer-list position all stay put when you come back. The
+--- tradeoff: revisiting it via `:e`/`:b` does not re-fire BufReadCmd (same
+--- as any real file), so you see whatever was last fetched. `:e!` forces a
+--- fresh fetch when that matters.
+---
+--- A load baseline belongs to one object, so neither direction keeps it.
+--- @param bufnr integer
+--- @param scheme boolean
+local function scheme_buffer(bufnr, scheme)
+    -- Not `scheme and X or Y` per option: one value wanted here is `false`,
+    -- which that idiom turns into Y.
+    if scheme then
+        vim.bo[bufnr].buftype = 'acwrite'
+        vim.bo[bufnr].swapfile = false
+        vim.bo[bufnr].bufhidden = 'hide'
+    else
+        vim.bo[bufnr].buftype = ''
+        vim.bo[bufnr].swapfile = vim.go.swapfile
+        vim.bo[bufnr].bufhidden = ''
+    end
+    vim.b[bufnr].arcanist_loaded = nil
+end
+
 --- Populate `bufnr` (already named "arcanist://<ref>") by fetching
 --- `prefix`+`id` over Conduit. Asynchronous -- there's no reason to block
 --- the editor while a buffer loads; only `:w` blocks.
@@ -319,27 +374,12 @@ end
 --- @param prefix string
 --- @param id integer
 local function load_reference(bufnr, handler, prefix, id)
-    vim.bo[bufnr].buftype = 'acwrite'
-    -- A swapfile can't do its job here and actively gets in the way: this
-    -- BufReadCmd repopulates the buffer from the server on every open, so
-    -- recovered content is overwritten the moment the buffer opens, while a
-    -- swapfile left behind by a crash makes the next open fail with E325
-    -- against a "file" that "CANNOT BE FOUND". netrw disables them for its
-    -- remote buffers for the same reason.
-    vim.bo[bufnr].swapfile = false
-    -- Survive navigating away rather than being unloaded -- cursor,
-    -- scroll and buffer-list position all stay put when you come back.
-    -- The tradeoff: since the buffer is still *loaded*, revisiting it via
-    -- `:e`/`:b` does not re-fire BufReadCmd (same as any real file), so
-    -- you see whatever was last fetched, not necessarily the current
-    -- server state. `:e!` forces a fresh fetch when that matters.
-    vim.bo[bufnr].bufhidden = 'hide'
+    scheme_buffer(bufnr, true)
     -- Non-editable while loading -- this is what backstops a write racing
     -- the fetch (see push()), and doubles as the "loaded successfully"
-    -- marker via arcanist_loaded below.
+    -- marker via arcanist_loaded, which scheme_buffer has just cleared.
     vim.bo[bufnr].modifiable = false
     vim.bo[bufnr].readonly = true
-    vim.b[bufnr].arcanist_loaded = nil
     notify.info(string.format('loading %s%d...', prefix, id))
 
     conduit.call(handler.search, handler.params(id), function(ok, response, err)
@@ -372,6 +412,67 @@ local function load_reference(bufnr, handler, prefix, id)
     end)
 end
 
+--- The object `lines` says it is: the last non-blank line, labelled with one
+--- of HANDLERS' `identity` spellings and naming a single object. The monogram
+--- decides the type; the label only qualifies the line as an identity at all.
+--- Answered off the raw text because it settles which type's field list to
+--- parse with, before there is one to parse against.
+---
+--- Narrow on purpose. Phorge's vocabulary does not distinguish "this file
+--- *is* T123" from "this revision *references* T123" -- on a revision every
+--- spelling of "task" is the task-reference field, whose aliases include the
+--- singular "Maniphest Task". Only the plural is ever written there, so
+--- requiring the exact singular label is what stops ":ArcWrite" in an `arc
+--- diff` buffer -- which carries "Maniphest Tasks: T1" and no revision of its
+--- own yet -- from pushing a commit message into T1.
+---
+--- Naming nothing is not an error; the caller decides whether it needed a
+--- name. Looking like an identity but naming no one object is.
+--- @param lines string[]
+--- @return string? prefix
+--- @return integer? id
+--- @return string? err
+local function identity_in(lines)
+    local last
+    for i = #lines, 1, -1 do
+        if vim.trim(lines[i]) ~= '' then
+            last = i
+            break
+        end
+    end
+    -- Line 1 is always the title (see fields.parse), so a lone identity line
+    -- is a title that looks like one.
+    if not last or last == 1 then
+        return nil
+    end
+
+    local label, value = vim.trim(lines[last]):match('^([^:]+):%s*(.*)$')
+    local want = label and IDENTITY[label]
+    if not want then
+        return nil
+    end
+
+    -- `arc` writes a revision's URI ("https://phorge.example.com/D456");
+    -- Phorge's own parser takes that or the bare monogram, so both do here.
+    local monogram = value:match('^%S+/([^/%s]+)$') or value
+    local prefix, id = parse_ref(monogram)
+    if not prefix then
+        return nil, nil, string.format('"%s: %s" does not name one object', label, value)
+    end
+    if prefix ~= want then
+        return nil,
+            nil,
+            string.format(
+                '"%s:" cannot name %s -- that is not a %s',
+                label,
+                monogram,
+                HANDLERS[want].type
+            )
+    end
+
+    return prefix, id
+end
+
 --- Push `lines` (from `bufnr`) to `prefix`+`id` over Conduit. When `bufnr`
 --- is itself the "arcanist://<ref>" buffer being updated, runs the
 --- staleness guard first (unless `force`) and refreshes its
@@ -388,6 +489,10 @@ end
 --- in it is sent -- there's nothing to diff against. Either way, a field
 --- whose label was deleted from the buffer is simply absent from the
 --- parse, and left untouched on the server.
+---
+--- An identity line is cross-checked against the target first, whichever
+--- entry point got here, so no path can push one object's text over
+--- another's.
 ---
 --- Shared by two entry points: `:w` on an "arcanist://" buffer (via
 --- write_reference below), and the ":ArcWrite" command, which pushes
@@ -414,6 +519,27 @@ local function push(bufnr, handler, prefix, id, lines, force)
         return
     end
 
+    local id_prefix, id_id, id_err = identity_in(lines)
+    if id_err then
+        notify.err(string.format('failed to update %s: %s', ref_name, id_err))
+        return
+    end
+    if id_prefix and not (id_prefix == prefix and id_id == id) then
+        -- A copy about to go over the object it was copied from. `!` doesn't
+        -- override this -- it means "ignore the staleness check" -- but
+        -- deleting the line does.
+        notify.err(
+            string.format(
+                '%s: this text is labelled %s%d. Delete the "%s:" line to push it elsewhere',
+                ref_name,
+                id_prefix,
+                id_id,
+                HANDLERS[id_prefix].identity
+            )
+        )
+        return
+    end
+
     local values, parse_err = fields.parse(handler.fields, lines)
     if not values then
         notify.err(string.format('failed to update %s: %s', ref_name, parse_err))
@@ -423,7 +549,12 @@ local function push(bufnr, handler, prefix, id, lines, force)
     local transactions = {}
     for _, field in ipairs(handler.fields) do
         local raw = values[field.key]
-        if raw ~= nil and fields.changed(field, baseline and baseline.values[field.key], raw) then
+        -- No `write` is the identity line: nothing to send for it.
+        if
+            field.write
+            and raw ~= nil
+            and fields.changed(field, baseline and baseline.values[field.key], raw)
+        then
             local value, err = fields.write_value(field, raw)
             if not value then
                 notify.err(string.format('failed to update %s: %s', ref_name, err))
@@ -531,9 +662,10 @@ local function write_reference(args)
 end
 
 --- Handle ":ArcWrite[!] [ref]". `ref` defaults to the current buffer's own
---- reference if it's an "arcanist://" buffer; otherwise it's required. This
---- is the way to push when the target's own buffer is already open
---- elsewhere -- see push()'s doc comment for why `:w` can't do that.
+--- reference if it's an "arcanist://" buffer, and otherwise to whatever its
+--- identity line names (see identity_in). This is the way to push when the
+--- target's own buffer is already open elsewhere -- see push()'s doc comment
+--- for why `:w` can't do that.
 --- @param cmd_args table nvim_create_user_command callback args
 local function push_command(cmd_args)
     local bufnr = vim.api.nvim_get_current_buf()
@@ -551,8 +683,23 @@ local function push_command(cmd_args)
         target = vim.api.nvim_buf_get_name(bufnr)
         prefix, id = parse_uri(target)
         if not prefix then
-            notify.err(':ArcWrite needs a reference (current buffer is not an "arcanist://" buffer)')
-            return
+            -- Nothing in the name to go on, so fall back to what the text
+            -- says it is.
+            local id_prefix, id_id, id_err =
+                identity_in(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false))
+            if id_err then
+                notify.err(':ArcWrite: ' .. id_err)
+                return
+            end
+            prefix, id = id_prefix, id_id
+            if not prefix then
+                notify.err(
+                    ':ArcWrite needs a reference: this is not an "arcanist://" buffer, and its '
+                        .. 'last line does not name a Phorge object'
+                )
+                return
+            end
+            target = M.uri(prefix, id)
         end
     end
 
@@ -629,6 +776,27 @@ function M.setup()
         group = augroup,
         pattern = 'arcanist://*',
         callback = write_reference,
+    })
+
+    -- ":saveas" and ":file" change a buffer's name and none of its options,
+    -- which would leave 'buftype' at "acwrite" under a name no BufWriteCmd
+    -- matches -- E676, and nothing written. BufFilePre matches the name being
+    -- left and BufFilePost the one being taken, so a rename lands on whichever
+    -- applies and the buffer ends up as what its new name says it is.
+    vim.api.nvim_create_autocmd('BufFilePre', {
+        group = augroup,
+        pattern = 'arcanist://*',
+        callback = function(args)
+            scheme_buffer(args.buf, false)
+        end,
+    })
+
+    vim.api.nvim_create_autocmd('BufFilePost', {
+        group = augroup,
+        pattern = 'arcanist://*',
+        callback = function(args)
+            scheme_buffer(args.buf, true)
+        end,
     })
 
     vim.api.nvim_create_user_command('ArcWrite', push_command, {
