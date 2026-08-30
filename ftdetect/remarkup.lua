@@ -2,7 +2,9 @@
 --
 -- Remarkup has no canonical file extension of its own -- it's normally
 -- typed inline into comment boxes and wiki pages, not saved as a file.
--- The one place it *does* hit disk is when `arc` (Arcanist, Phorge's CLI)
+-- ".remarkup" is a Phorge object saved out of an "arcanist://" buffer.
+--
+-- The other place it hits disk is when `arc` (Arcanist, Phorge's CLI)
 -- shells out to $EDITOR on a temp file for a revision message or update
 -- comment. It always writes an unrandomized basename (no extension) into
 -- a randomly-named temp directory, via `PhutilInteractiveEditor::setName()`
@@ -22,6 +24,9 @@
 -- prefixed "edit." -- so patterns below require ".../edit.<random>/"
 -- right before the basename, without caring what precedes it.
 vim.filetype.add({
+    extension = {
+        remarkup = 'remarkup',
+    },
     pattern = {
         ['.*/edit%.[^/]+/differential%-edit%-revision%-info'] = 'remarkup',
         ['.*/edit%.[^/]+/differential%-update%-comments'] = 'remarkup',

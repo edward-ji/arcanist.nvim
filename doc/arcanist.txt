@@ -48,6 +48,10 @@ automatically: the revision message and test plan from `arc diff --edit`, the
 comment prompt when updating a revision, the initial commit message, and the
 commit message from `arc patch`.
 
+A ".remarkup" file is detected too. Nobody else uses that extension; it is the
+one to give a Phorge object you save out to an ordinary file, so reopening
+it is Remarkup again.
+
 Anywhere else, ask for it: >vim
 
     :set filetype=remarkup
