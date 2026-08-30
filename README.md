@@ -2,6 +2,10 @@
 
 A Neovim plugin for [Arcanist], a command-line interface to Phorge.
 
+Edit Phorge tasks and revisions as buffers (`:e arcanist://T123`), browse them
+in a picker, run `arc lint` into the quickfix list, and write Remarkup with
+highlighting, completion and file upload on paste.
+
 ## Requirements
 
 - Neovim 0.10+.
@@ -29,28 +33,6 @@ vim.api.nvim_create_autocmd('PackChanged', {
         end
     end,
 })
-
--- Optional -- every option has a default. These are them.
-require('arcanist').setup({
-    paste = {
-        upload = true,                     -- upload files pasted into remarkup buffers
-        placeholder = '{Uploading %s...}', -- shown while an upload is in flight
-    },
-    completion = {
-        mention_kind = 'Reference', -- CompletionItemKind for @mention items
-        project_kind = 'Module',    -- CompletionItemKind for #project items
-    },
-    conduit_timeout = 10000,               -- ms before a blocking Conduit call gives up
-})
-
--- Browse Phorge objects and open the one you pick. The picker is whatever
--- `vim.ui.select` is bound to.
-vim.keymap.set('n', '<leader>rr', function()
-    require('arcanist').list({ type = 'revision' })
-end, { desc = 'Arc revisions' })
-vim.keymap.set('n', '<leader>rt', function()
-    require('arcanist').list({ type = 'task' })
-end, { desc = 'Arc tasks' })
 ```
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
@@ -75,6 +57,14 @@ end, { desc = 'Arc tasks' })
         },
     },
 }
+```
+
+## Documentation
+
+Once installed, run inside Neovim:
+
+```
+:help arcanist
 ```
 
 ## Rebuilding the grammar

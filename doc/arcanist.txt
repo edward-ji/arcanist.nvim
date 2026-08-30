@@ -1,0 +1,444 @@
+*arcanist.txt*  Phorge tasks, revisions and Remarkup inside Neovim
+
+==============================================================================
+CONTENTS                                                   *arcanist-contents*
+
+  1. Introduction ................................ |arcanist-introduction|
+  2. Remarkup .................................... |arcanist-remarkup|
+  3. arcanist:// buffers ......................... |arcanist-buffers|
+  4. Fields ...................................... |arcanist-fields|
+  5. Completion and go-to ........................ |arcanist-lsp|
+  6. Pasting files ............................... |arcanist-paste|
+  7. Commands .................................... |arcanist-commands|
+  8. Configuration ............................... |arcanist-config|
+  9. Lua API ..................................... |arcanist-api|
+ 10. Troubleshooting ............................. |arcanist-troubleshooting|
+
+==============================================================================
+1. INTRODUCTION                                                     *arcanist*
+                                                               *arcanist.nvim*
+                                                       *arcanist-introduction*
+
+arcanist.nvim brings Phorge into Neovim through `arc`, Phorge's command-line
+client. It has two halves.
+
+Remarkup -- Phorge's markup language -- becomes a filetype, with highlighting,
+completion for @mentions and #projects, |gd| on a T123 reference, and file
+upload on paste. That applies to any Remarkup buffer, including the temporary
+files `arc` opens in your editor. See |arcanist-remarkup|.
+
+"arcanist://" buffers are Phorge objects themselves. `:e arcanist://T123`
+fetches the task; `:w` writes your edits back. See |arcanist-buffers|.
+
+Two things have to be in place for any of it to work. `arc` must be on your
+$PATH and configured against your instance (see ~/.arcrc) -- every request
+goes through it. And the Remarkup parser must be built, which is what `make`
+in the plugin directory does; a plugin manager's build step normally handles
+that. See the README for both. If something is missing, the message you get
+is listed under |arcanist-troubleshooting|.
+
+==============================================================================
+2. REMARKUP                                                *arcanist-remarkup*
+                                                                 *ft-remarkup*
+
+Remarkup files have no conventional extension -- the markup is normally typed
+into a comment box rather than saved. The one place it reliably hits disk is
+when `arc` shells out to your editor, so those files are detected
+automatically: the revision message and test plan from `arc diff --edit`, the
+comment prompt when updating a revision, the initial commit message, and the
+commit message from `arc patch`.
+
+Anywhere else, ask for it: >vim
+
+    :set filetype=remarkup
+<
+OPTIONS
+
+Nothing reflows a line in a Remarkup buffer. A single newline is a real line
+break in Remarkup, so 'textwidth' and 'wrapmargin' are set to 0 and the 'a'
+and 't' flags are removed from 'formatoptions'. Use 'wrap' if you want long
+lines to be visually broken.
+
+'comments' keeps only the markers Remarkup actually has -- "*" and "-"
+bullets, and ">" quotes -- so |gq| and |J| leave those intact when you reflow
+a paragraph by hand.
+
+HIGHLIGHTING
+
+Highlighting is provided by a bundled tree-sitter grammar, mapped onto the
+standard treesitter groups (see |treesitter-highlight-groups|). Any
+colorscheme with @markup.* support renders Remarkup without further
+configuration.
+
+Code blocks are highlighted in their own language, which is worked out three
+ways, in this order -- an explicit "lang=", the language implied by a
+"name=" filename, and a bare language word after the fence: >
+
+    ```lang=php
+    ```name=example.html
+    ```php
+<
+The bare word is only honoured for the languages Phorge itself recognises
+there; any other word is the block's first line of code, as it is in Phorge.
+A language Neovim has no parser installed for is left unhighlighted.
+
+==============================================================================
+3. ARCANIST:// BUFFERS                                      *arcanist-buffers*
+                                                                 *arcanist://*
+
+A Phorge object opens as a buffer named after it: >vim
+
+    :edit arcanist://T123
+    :edit arcanist://D456
+<
+Tasks (T) and revisions (D) are supported.
+
+You rarely have to type the URL. |gd| on a reference inside a Remarkup buffer
+opens it (see |arcanist-lsp|), and |:ArcList| opens whatever you pick.
+
+WRITING                                                       *arcanist-write*
+
+`:w` pushes the buffer back to Phorge. Only the fields you actually changed
+are sent. See |arcanist-fields| for what the buffer's shape means.
+
+If the object changed on the server since you opened it, the write stops and
+says so rather than overwriting somebody else's edit. Your buffer is left
+modified and you have three ways out: >
+
+    :w /tmp/mine       keep a copy of your version first
+    :e!                discard yours and reload theirs
+    :w!                overwrite theirs with yours
+<
+REFRESHING
+
+An "arcanist://" buffer stays loaded when you navigate away, so your cursor
+and scroll position survive. The flip side is that returning to it shows what
+was last fetched, not necessarily what the server has now. `:e!` refetches.
+
+==============================================================================
+4. FIELDS                                                    *arcanist-fields*
+
+An "arcanist://" buffer is plain text: a title on the first line, then one
+labelled field after another. Every field shown is editable, and editing the
+text is how you edit the object.
+
+A task looks like this: >
+
+    Rewrite the export pipeline
+
+    Status: Open
+    Priority: High
+
+    Description:
+    The nightly export times out on large accounts.
+
+    See {T98} for the original report.
+<
+A revision looks like this: >
+
+    Add a --dry-run flag to the exporter
+
+    Summary:
+    Lets operators see what would be exported without writing anything.
+
+    Test Plan:
+    Ran the exporter against staging with and without the flag.
+<
+RULES
+
+The first line is always the title.
+
+A one-line field carries its value after the label on the same line:
+"Status: Open".
+
+A block field -- Description, Summary, Test Plan -- runs from its label to the
+next label the plugin knows, or to the end of the buffer. A blank line does
+not end one, so multi-paragraph text is fine, and prose of your own containing
+something like "Note:" is left alone rather than read as a label.
+
+Delete a field's label and that field is left untouched on the server. This is
+the way to save an edit to one field without touching the others, though it is
+rarely needed -- unchanged fields are not sent in the first place.
+
+STATUS AND PRIORITY
+
+These accept either the name shown ("Needs Triage") or any keyword Phorge
+accepts for it ("triage"), ignoring case and surrounding spaces. Completion
+offers the valid values while the cursor is on the line; see |arcanist-lsp|.
+The valid values are whatever your instance is configured with, not a fixed
+list.
+
+Revisions have no editable Status, deliberately. Phorge moves a revision's
+status through accept, reject, abandon and the like, not by setting a value,
+so the field is left out rather than shown and then rejected on write.
+
+==============================================================================
+5. COMPLETION AND GO-TO                                         *arcanist-lsp*
+
+Remarkup buffers get an in-editor language server, so these features arrive
+through the keymaps and completion plugin you already use rather than
+through anything specific to this plugin.
+
+GO-TO                                                    *arcanist-definition*
+
+|gd|, or |vim.lsp.buf.definition()|, on an object reference opens it as an
+"arcanist://" buffer.
+
+COMPLETION                                               *arcanist-completion*
+
+Three sources:
+
+    @mention        users, searched on your instance as you type
+    #project        projects, by name or by any of their hashtags
+    field values    Status and Priority, on their own line in a task buffer
+
+Matching follows Phorge's own typeahead: what you type must start one of the
+words of a candidate, not merely appear inside it. So "@linc" finds Abraham
+Lincoln, "@ncol" does not, and "#qual" offers the "#qa" hashtag of a project
+named Quality Assurance. A project is offered once per hashtag, so either
+spelling can be picked.
+
+Disabled users, bots, mailing lists and archived projects are offered, but
+labelled as such and sorted last -- consistent with Phorge.
+
+If you have no completion plugin, Neovim's own can be turned on for these
+buffers: >lua
+
+    vim.api.nvim_create_autocmd('LspAttach', {
+        callback = function(args)
+            local client = vim.lsp.get_client_by_id(args.data.client_id)
+            if client and client.name == 'arcanist' then
+                vim.lsp.completion.enable(true, client.id, args.buf,
+                    { autotrigger = true })
+            end
+        end,
+    })
+<
+==============================================================================
+6. PASTING FILES                                              *arcanist-paste*
+
+Paste the absolute path of a file that exists into a Remarkup buffer and the
+file is uploaded to Phorge, leaving the reference behind: >
+
+    {F123}
+<
+While the upload is in flight a placeholder marks the spot, and is replaced
+when it finishes. On failure the placeholder is removed and the error
+reported.
+
+This is aimed at terminals that paste dropped files as paths. Several
+space-separated paths in one paste are each uploaded. Only absolute paths
+("/" or "~") are treated this way, so ordinary prose that happens to match a
+filename is pasted as text.
+
+Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
+
+==============================================================================
+7. COMMANDS                                                *arcanist-commands*
+
+------------------------------------------------------------------------------
+                                                                    *:ArcLint*
+:ArcLint[!] [args]      Run `arc lint` and load its findings into the
+                        |quickfix| list, opening it if there are any.
+
+                        Findings map onto quickfix types: errors to "E",
+                        warnings and autofixes to "W", advice to "I". Lint
+                        rules your project has disabled are dropped rather
+                        than listed.
+
+                        [args] is passed through to `arc lint`, so paths and
+                        flags both work: >vim
+
+                            :ArcLint src/
+                            :ArcLint --rev=HEAD~3
+<
+                        Unlike on the command line, a flag's value has to be
+                        attached with "=". Flags are sorted from paths here,
+                        and a bare "HEAD~1" is indistinguishable from a path;
+                        writing the "--" yourself passes [args] through
+                        exactly as typed instead.
+
+                        "--output" and "--outfile" are set by the plugin and
+                        are rejected if you pass them.
+
+                        Runs from the working copy root -- the nearest
+                        directory containing .arcconfig or .git, or the
+                        current directory if there is neither.
+
+                        One run at a time: while a run is in flight, a plain
+                        :ArcLint refuses and says how long the other has been
+                        going. :ArcLint! cancels it and starts over.
+
+------------------------------------------------------------------------------
+                                                                    *:ArcList*
+:ArcList [query] [type]
+                        Browse tasks and revisions in a picker and open the
+                        one you choose.
+
+                        The arguments read as English: >vim
+
+                            :ArcList open tasks
+                            :ArcList active revisions
+                            :ArcList tasks
+                            :ArcList
+<
+                        [query] is one of Phorge's builtin queries for that
+                        type. Tasks accept "assigned", "authored",
+                        "subscribed", "open" and "all"; revisions accept
+                        "active", "authored" and "all". It defaults to "all".
+
+                        [type] is "task"/"tasks" or "revision"/"revisions".
+                        Omit it and both are listed together, most recently
+                        modified first.
+
+                        The picker is whatever |vim.ui.select()| is bound to,
+                        so a fuzzy finder renders it if you have one.
+
+------------------------------------------------------------------------------
+                                                                   *:ArcWrite*
+:ArcWrite[!] [ref]      Push the current buffer to a Phorge object. [ref] is a
+                        monogram like "T123"; without it, the current buffer's
+                        own reference is used.
+
+                        With no [ref] -- pushing an "arcanist://" buffer to
+                        itself -- this behaves exactly like `:w`: only changed
+                        fields are sent, and the conflict guard of
+                        |arcanist-write| applies, with "!" to overwrite.
+
+                        With a [ref], it pushes whatever buffer you are in to
+                        that object: >vim
+
+                            :ArcWrite T123
+<
+                        That form is the way past |E139|, which stops
+                        `:w arcanist://T123` when T123 is already open in
+                        another buffer. It also lets you compose in an
+                        ordinary file and send it.
+
+                        Note that a foreign buffer has nothing to compare
+                        against, so every field it contains is sent, and the
+                        conflict guard does not run. A field whose label you
+                        leave out is still left alone.
+
+==============================================================================
+8. CONFIGURATION                                             *arcanist-config*
+
+Calling `setup()` is optional. Every option has a default, and the plugin
+works without it. These are the defaults: >lua
+
+    require('arcanist').setup({
+        paste = {
+            upload = true,
+            placeholder = '{Uploading %s...}',
+        },
+        completion = {
+            mention_kind = 'Reference',
+            project_kind = 'Module',
+        },
+        conduit_timeout = 10000,
+    })
+<
+                                                *arcanist-config-paste.upload*
+paste.upload ~
+    Whether pasting a file path into a Remarkup buffer uploads the file.
+    Set to false to paste paths as ordinary text. See |arcanist-paste|.
+
+                                           *arcanist-config-paste.placeholder*
+paste.placeholder ~
+    Text shown at the cursor while an upload runs. "%s" is replaced with the
+    file's name.
+
+                                     *arcanist-config-completion.mention_kind*
+completion.mention_kind ~
+    The name of the completion item kind used for @mention items, which is
+    what decides the icon your completion menu shows for them. Any key of
+    `vim.lsp.protocol.CompletionItemKind` -- "Reference", "Module", "Text"
+    and so on; see |vim.lsp.protocol|.
+
+                                     *arcanist-config-completion.project_kind*
+completion.project_kind ~
+    The same, for #project items.
+
+                                             *arcanist-config-conduit_timeout*
+conduit_timeout ~
+    Milliseconds to wait on a request that blocks the editor -- writing an
+    "arcanist://" buffer -- before giving up. Raise it on a slow instance.
+
+==============================================================================
+9. LUA API                                                      *arcanist-api*
+
+                                                            *arcanist.setup()*
+require('arcanist').setup({opts})
+
+    Apply configuration. Optional; see |arcanist-config|.
+
+                                                             *arcanist.list()*
+require('arcanist').list({opts})
+
+    The implementation behind |:ArcList|, for binding to a key. {opts} is a
+    table, all keys optional:
+
+        type        string or list of strings: "task", "revision", or their
+                    plurals. Omitted lists every supported type.
+        query_key   one of the type's builtin queries. Defaults to "all".
+        limit       results to fetch per type. Defaults to 100, which is also
+                    the most Phorge will return.
+
+    For example: >lua
+
+        vim.keymap.set('n', '<leader>rr', function()
+            require('arcanist').list({ type = 'revision' })
+        end, { desc = 'Arc revisions' })
+
+        vim.keymap.set('n', '<leader>rt', function()
+            require('arcanist').list({ type = 'task', query_key = 'open' })
+        end, { desc = 'Open arc tasks' })
+<
+==============================================================================
+10. TROUBLESHOOTING                                 *arcanist-troubleshooting*
+
+Every message the plugin prints is prefixed "arcanist.nvim:".
+
+"remarkup parser not built -- run `make` in the plugin directory" ~
+    The tree-sitter parser is a compiled binary and is built per machine, not
+    shipped. Run `make` in the plugin's directory, or point your plugin
+    manager's build step at it. It needs a C compiler on $PATH.
+
+"ENOENT" or a complaint that `arc` could not be started ~
+    `arc` is not on Neovim's $PATH. Note that Neovim's environment is not
+    necessarily your shell's -- if `arc` runs in a terminal but not here,
+    check where your $PATH is set.
+
+"failed to load T123: ..." ~
+    The request reached `arc` and came back unhappy. A message about
+    authentication or a certificate means ~/.arcrc is not set up for this
+    instance; run `arc install-certificate`.
+
+"T123 changed on the server since it was loaded" ~
+    Somebody else edited it while you had it open. Your edits are still in the
+    buffer; see |arcanist-write| for the three ways out.
+
+"T123 has not loaded successfully; nothing to update" ~
+    The buffer never received content, so there is nothing to diff a write
+    against. `:e!` to try fetching again.
+
+"arc call-conduit timed out" ~
+    A blocking request took longer than `conduit_timeout`. Raise it -- see
+    |arcanist-config|.
+
+"@mention completion failed: ..." ~
+    Completion queries your instance live, so this is the same class of
+    problem as a failed load: check .arcconfig points at the right instance
+    and that your API token is still valid. The message is only shown once
+    per distinct failure, not once per keystroke.
+
+"arc lint: No paths are lintable." ~
+    `arc lint` had nothing to work on -- usually because nothing has changed
+    against the base revision. Pass paths or a "--rev=" flag explicitly.
+
+"arc lint is already running (42s)" ~
+    Only one run at a time, since they share the quickfix list. :ArcLint! to
+    cancel the running one and start over.
+
+==============================================================================
+vim:tw=78:ts=8:et:ft=help:norl:
