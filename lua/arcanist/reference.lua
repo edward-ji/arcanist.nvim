@@ -379,6 +379,10 @@ local function load_reference(bufnr, handler, prefix, id)
     vim.bo[bufnr].modifiable = false
     vim.bo[bufnr].readonly = true
     notify.info(string.format('loading %s%d...', prefix, id))
+    -- A BufReadCmd stands in for the whole read, the BufReadPre/BufReadPost
+    -- either side of it included, so they are fired here or not at all.
+    -- Post waits for the fetch: it means "this buffer now holds the object".
+    vim.api.nvim_exec_autocmds('BufReadPre', { buffer = bufnr })
 
     conduit.call(handler.search, handler.params(id), function(ok, response, err)
         if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -407,6 +411,7 @@ local function load_reference(bufnr, handler, prefix, id)
             ref = string.format('%s%d', prefix, id),
             values = fields.raw_values(handler.fields, obj),
         }
+        vim.api.nvim_exec_autocmds('BufReadPost', { buffer = bufnr })
     end)
 end
 
@@ -507,6 +512,7 @@ end
 --- @param lines string[]
 --- @param force boolean skip the staleness guard (from `:w!`/`:ArcWrite!`)
 --- and overwrite the server's version even if it changed since load.
+--- @return boolean pushed whether the object now matches the buffer.
 local function push(bufnr, handler, prefix, id, lines, force)
     local ref_name = string.format('%s%d', prefix, id)
     local config = require('arcanist').config
@@ -521,13 +527,13 @@ local function push(bufnr, handler, prefix, id, lines, force)
 
     if is_own and not baseline then
         notify.err(string.format('%s has not loaded successfully; nothing to update', ref_name))
-        return
+        return false
     end
 
     local id_prefix, id_id, id_err = identity_in(lines)
     if id_err then
         notify.err(string.format('failed to update %s: %s', ref_name, id_err))
-        return
+        return false
     end
     if id_prefix and not (id_prefix == prefix and id_id == id) then
         -- A copy about to go over the object it was copied from. `!` doesn't
@@ -542,13 +548,13 @@ local function push(bufnr, handler, prefix, id, lines, force)
                 HANDLERS[id_prefix].identity
             )
         )
-        return
+        return false
     end
 
     local values, parse_err = fields.parse(handler.fields, lines)
     if not values then
         notify.err(string.format('failed to update %s: %s', ref_name, parse_err))
-        return
+        return false
     end
 
     local transactions = {}
@@ -563,7 +569,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
             local value, err = fields.write_value(field, raw)
             if not value then
                 notify.err(string.format('failed to update %s: %s', ref_name, err))
-                return
+                return false
             end
             table.insert(transactions, { type = field.key, value = value })
         end
@@ -574,7 +580,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
         if is_own then
             vim.bo[bufnr].modified = false
         end
-        return
+        return true
     end
 
     -- Blocking Conduit calls follow; say so before the UI freezes, not
@@ -590,11 +596,11 @@ local function push(bufnr, handler, prefix, id, lines, force)
         local obj, err = fetch_sync(handler, id)
         if err then
             notify.err(string.format('failed to check %s for changes: %s', ref_name, err))
-            return
+            return false
         end
         if not obj then
             notify.err(string.format('%s no longer exists', ref_name))
-            return
+            return false
         end
         -- Compared field by field rather than by dateModified, which has
         -- one-second resolution and moves for a write that changed nothing.
@@ -624,7 +630,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
                     ref_name
                 )
             )
-            return
+            return false
         end
     end
 
@@ -634,12 +640,12 @@ local function push(bufnr, handler, prefix, id, lines, force)
     }, config.conduit_timeout)
     if not ok then
         notify.err(string.format('failed to update %s: %s', ref_name, err))
-        return
+        return false
     end
 
     if not baseline then
         notify.info('updated ' .. ref_name)
-        return
+        return true
     end
 
     -- Re-fetch for a baseline matching what the server now holds. Content
@@ -664,6 +670,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
             )
         )
     end
+    return true
 end
 
 --- Handle `:w`/`:w!` on an "arcanist://<ref>" target. `v:cmdbang` (rather
@@ -677,9 +684,15 @@ local function write_reference(args)
         return
     end
 
+    -- Read the buffer after BufWritePre, so anything that rewrites it there
+    -- (a formatter, say) is part of what gets pushed, and announce the write
+    -- only once it has actually landed.
     local bufnr = args.buf
+    vim.api.nvim_exec_autocmds('BufWritePre', { buffer = bufnr })
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    push(bufnr, handler, prefix, id, lines, vim.v.cmdbang == 1)
+    if push(bufnr, handler, prefix, id, lines, vim.v.cmdbang == 1) then
+        vim.api.nvim_exec_autocmds('BufWritePost', { buffer = bufnr })
+    end
 end
 
 --- Handle ":ArcWrite[!] [ref]". `ref` defaults to the current buffer's own
