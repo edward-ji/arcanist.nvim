@@ -12,7 +12,8 @@ CONTENTS                                                   *arcanist-contents*
   7. Commands .................................... |arcanist-commands|
   8. Configuration ............................... |arcanist-config|
   9. Lua API ..................................... |arcanist-api|
- 10. Troubleshooting ............................. |arcanist-troubleshooting|
+ 10. Recipes ..................................... |arcanist-recipes|
+ 11. Troubleshooting ............................. |arcanist-troubleshooting|
 
 ==============================================================================
 1. INTRODUCTION                                                     *arcanist*
@@ -480,7 +481,31 @@ require('arcanist').list({opts})
         end, { desc = 'Open arc tasks' })
 <
 ==============================================================================
-10. TROUBLESHOOTING                                 *arcanist-troubleshooting*
+10. RECIPES                                                *arcanist-recipes*
+
+Things the plugin deliberately leaves to your configuration, because there is
+more than one reasonable answer.
+
+LOCAL FILE, EXPLICIT PUSH                             *arcanist-recipe-local*
+
+`:w` on an "arcanist://" buffer blocks the editor on a Conduit round-trip.
+Rename the buffer to a temporary file once it has loaded and `:w` becomes an
+ordinary local write, leaving |:ArcWrite| -- which pushes by the identity
+line, see |arcanist-identity| -- as the only thing that talks to Phorge. >lua
+
+    vim.api.nvim_create_autocmd('BufReadPost', {
+        pattern = 'arcanist://*',
+        nested = true,
+        callback = function(args)
+            local dir = vim.fn.tempname()
+            vim.fn.mkdir(dir, 'p')
+            local name = args.file:match('^arcanist://(.*)$') .. '.remarkup'
+            vim.api.nvim_buf_set_name(args.buf, vim.fs.joinpath(dir, name))
+        end,
+    })
+<
+==============================================================================
+11. TROUBLESHOOTING                                 *arcanist-troubleshooting*
 
 Every message the plugin prints is prefixed "arcanist.nvim:".
 
