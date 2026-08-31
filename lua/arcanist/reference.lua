@@ -695,6 +695,35 @@ local function write_reference(args)
     end
 end
 
+--- Handle ":[line]r arcanist://<ref>": insert the object's document into
+--- another buffer, after the line `:read` puts its '[ mark on. Blocking,
+--- like a write: `:read` has to leave the inserted text and its marks in
+--- place by the time the command returns.
+--- @param args table autocmd callback args
+local function read_reference(args)
+    local prefix, id = parse_uri(args.match)
+    local handler = resolve_handler(prefix, args.match, 'read')
+    if not handler then
+        return
+    end
+
+    vim.api.nvim_exec_autocmds('FileReadPre', { buffer = args.buf })
+    local obj, err = fetch_sync(handler, id)
+    if not obj then
+        notify.err(string.format('failed to read %s%d: %s', prefix, id, err or 'not found'))
+        return
+    end
+
+    local at = vim.fn.line("'[")
+    local document = fields.render(handler.fields, obj)
+    vim.api.nvim_buf_set_lines(args.buf, at, at, false, document)
+    -- Doing the insertion by hand means setting the marks `:read` would
+    -- leave around it, which is what "'[,']" after one addresses.
+    vim.api.nvim_buf_set_mark(args.buf, '[', at + 1, 0, {})
+    vim.api.nvim_buf_set_mark(args.buf, ']', at + #document, 0, {})
+    vim.api.nvim_exec_autocmds('FileReadPost', { buffer = args.buf })
+end
+
 --- Handle ":ArcWrite[!] [ref]". `ref` defaults to the current buffer's own
 --- reference if it's an "arcanist://" buffer, and otherwise to whatever its
 --- identity line names (see identity_in). This is the way to push when the
@@ -783,9 +812,8 @@ local installed = false
 
 --- Install the "arcanist://" buffer scheme handlers. Idempotent -- safe to
 --- call from plugin/ at startup and again from every remarkup buffer, but
---- only does anything the first time: unlike a lone BufReadCmd, this now
---- registers a BufWriteCmd and a user command too, and neither needs
---- redoing on every remarkup buffer opened in a session.
+--- only does anything the first time: the autocmds and ":ArcWrite" are
+--- session-wide, and nothing about them is per-buffer.
 function M.setup()
     if installed then
         return
@@ -806,10 +834,35 @@ function M.setup()
         end,
     })
 
+    vim.api.nvim_create_autocmd('FileReadCmd', {
+        group = augroup,
+        pattern = 'arcanist://*',
+        callback = read_reference,
+    })
+
     vim.api.nvim_create_autocmd('BufWriteCmd', {
         group = augroup,
         pattern = 'arcanist://*',
         callback = write_reference,
+    })
+
+    -- A partial write ("'<,'>w arcanist://T123") would parse as a document
+    -- with most of its fields missing, and push that. Refused rather than
+    -- half-done; without a FileWriteCmd of our own Vim would try to create a
+    -- file literally called "arcanist://T123" and fail with E212.
+    vim.api.nvim_create_autocmd('FileWriteCmd', {
+        group = augroup,
+        pattern = 'arcanist://*',
+        callback = function(args)
+            notify.err(
+                string.format(
+                    'cannot write part of a buffer to %s -- a document is written whole, '
+                        .. 'with ":w %s" or ":ArcWrite"',
+                    args.match:gsub('^arcanist://', ''),
+                    args.match
+                )
+            )
+        end,
     })
 
     -- ":saveas" and ":file" change a buffer's name and none of its options,

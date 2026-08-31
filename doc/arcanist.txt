@@ -114,6 +114,17 @@ does not stop it. Your buffer is left modified and you have three ways out: >
     :e!                discard yours and reload theirs
     :w!                overwrite theirs with yours
 <
+READING INTO ANOTHER BUFFER
+
+`:read` pulls an object's document into the buffer you are already editing,
+below the cursor: >vim
+
+    :read arcanist://T123
+<
+The text arrives exactly as |:edit| renders it, identity line and all -- so
+if it lands at the end of the buffer, that line is the one |:ArcWrite| will
+aim at. See |arcanist-identity|.
+
 REFRESHING
 
 An "arcanist://" buffer stays loaded when you navigate away, so your cursor
@@ -506,6 +517,11 @@ last line does not name a Phorge object" ~
 "T124: this text is labelled T123" ~
     You asked to push a copy of one object over a different one. Delete the
     identity line if that is really what you meant.
+
+"cannot write part of a buffer to T123 -- a document is written whole" ~
+    A range write, as in `:'<,'>w arcanist://T123`. Only some of the fields
+    would reach Phorge and the rest would look deleted, so nothing is sent.
+    Write the whole buffer, with `:w arcanist://T123` or |:ArcWrite|.
 
 "arc call-conduit timed out" ~
     A blocking request took longer than `conduit_timeout`. Raise it -- see
