@@ -342,8 +342,6 @@ end
 --- tradeoff: revisiting it via `:e`/`:b` does not re-fire BufReadCmd (same
 --- as any real file), so you see whatever was last fetched. `:e!` forces a
 --- fresh fetch when that matters.
----
---- A load baseline belongs to one object, so neither direction keeps it.
 --- @param bufnr integer
 --- @param scheme boolean
 local function scheme_buffer(bufnr, scheme)
@@ -358,7 +356,6 @@ local function scheme_buffer(bufnr, scheme)
         vim.bo[bufnr].swapfile = vim.go.swapfile
         vim.bo[bufnr].bufhidden = ''
     end
-    vim.b[bufnr].arcanist_loaded = nil
 end
 
 --- Populate `bufnr` (already named "arcanist://<ref>") by fetching
@@ -375,9 +372,10 @@ end
 --- @param id integer
 local function load_reference(bufnr, handler, prefix, id)
     scheme_buffer(bufnr, true)
-    -- Non-editable while loading -- this is what backstops a write racing
-    -- the fetch (see push()), and doubles as the "loaded successfully"
-    -- marker via arcanist_loaded, which scheme_buffer has just cleared.
+    -- Non-editable while loading: this is what backstops a write racing the
+    -- fetch (see push()), and an absent arcanist_loaded is what tells push()
+    -- the buffer never received content.
+    vim.b[bufnr].arcanist_loaded = nil
     vim.bo[bufnr].modifiable = false
     vim.bo[bufnr].readonly = true
     notify.info(string.format('loading %s%d...', prefix, id))
@@ -406,8 +404,8 @@ local function load_reference(bufnr, handler, prefix, id)
         vim.bo[bufnr].filetype = handler.filetype
         set_lines(bufnr, fields.render(handler.fields, obj), true)
         vim.b[bufnr].arcanist_loaded = {
+            ref = string.format('%s%d', prefix, id),
             values = fields.raw_values(handler.fields, obj),
-            date_modified = obj.fields.dateModified,
         }
     end)
 end
@@ -483,12 +481,13 @@ end
 ---
 --- Only fields that actually changed become transactions -- diffed against
 --- `arcanist_loaded`, the baseline recorded at load (or after the last
---- successful push). A foreign buffer (e.g. `:w arcanist://T1` from an
---- unrelated buffer, or the README's `:w {file}` / `:e {file}` / `:w
---- arcanist://T1` round-trip) has no such baseline, so every field present
---- in it is sent -- there's nothing to diff against. Either way, a field
---- whose label was deleted from the buffer is simply absent from the
---- parse, and left untouched on the server.
+--- successful push), which names the object it was taken from. A buffer
+--- carrying a baseline for some other object, or none at all (`:w
+--- arcanist://T1` from an unrelated buffer), sends every field present in
+--- it -- there's nothing to diff against, and nothing to check for
+--- staleness either. Either way, a field whose label was deleted from the
+--- buffer is simply absent from the parse, and left untouched on the
+--- server.
 ---
 --- An identity line is cross-checked against the target first, whichever
 --- entry point got here, so no path can push one object's text over
@@ -511,8 +510,14 @@ end
 local function push(bufnr, handler, prefix, id, lines, force)
     local ref_name = string.format('%s%d', prefix, id)
     local config = require('arcanist').config
+    -- Two separate questions. Whether this is the object's own buffer
+    -- (`is_own`) decides what happens to the buffer, 'modified' above all.
+    -- Whether it carries a record of the object as loaded (`baseline`)
+    -- decides what gets sent and whether a conflict is checked for. A copy
+    -- saved out with ":sav" answers no to the first and yes to the second.
     local is_own = vim.api.nvim_buf_get_name(bufnr) == ('arcanist://' .. ref_name)
-    local baseline = is_own and vim.b[bufnr].arcanist_loaded or nil
+    local loaded = vim.b[bufnr].arcanist_loaded
+    local baseline = loaded and loaded.ref == ref_name and loaded or nil
 
     if is_own and not baseline then
         notify.err(string.format('%s has not loaded successfully; nothing to update', ref_name))
@@ -581,7 +586,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
     -- Skipped entirely with `force` (":w!"/":ArcWrite!") -- the round-trip
     -- exists to catch a conflict, and force means overwrite regardless of
     -- one, so there's nothing to check for.
-    if is_own and not force then
+    if baseline and not force then
         local obj, err = fetch_sync(handler, id)
         if err then
             notify.err(string.format('failed to check %s for changes: %s', ref_name, err))
@@ -591,7 +596,22 @@ local function push(bufnr, handler, prefix, id, lines, force)
             notify.err(string.format('%s no longer exists', ref_name))
             return
         end
-        if obj.fields.dateModified ~= baseline.date_modified then
+        -- Compared field by field rather than by dateModified, which has
+        -- one-second resolution and moves for a write that changed nothing.
+        -- Fields with no `write` are left out: a write cannot reach them, so
+        -- a change to one is not a change this write could lose.
+        local current = fields.raw_values(handler.fields, obj)
+        local drifted = false
+        for _, field in ipairs(handler.fields) do
+            if
+                field.write
+                and fields.changed(field, baseline.values[field.key], current[field.key])
+            then
+                drifted = true
+                break
+            end
+        end
+        if drifted then
             -- `:e` alone won't work here -- the buffer is modified, so Vim
             -- refuses with E37 -- and `:e!` discards the edits, hence the
             -- nudge to save them off somewhere first. `!` overwrites the
@@ -617,24 +637,25 @@ local function push(bufnr, handler, prefix, id, lines, force)
         return
     end
 
-    if not is_own then
+    if not baseline then
         notify.info('updated ' .. ref_name)
         return
     end
 
-    -- Re-fetch to pick up the new dateModified/loaded baseline. Content is
-    -- deliberately left alone so the cursor and undo history survive the
+    -- Re-fetch for a baseline matching what the server now holds. Content
+    -- is deliberately left alone so the cursor and undo history survive the
     -- save.
     local obj, refresh_err = fetch_sync(handler, id)
+    if is_own then
+        vim.bo[bufnr].modified = false
+    end
     if obj then
         vim.b[bufnr].arcanist_loaded = {
+            ref = ref_name,
             values = fields.raw_values(handler.fields, obj),
-            date_modified = obj.fields.dateModified,
         }
-        vim.bo[bufnr].modified = false
         notify.info('updated ' .. ref_name)
     else
-        vim.bo[bufnr].modified = false
         notify.warn(
             string.format(
                 'updated %s, but could not refresh it (%s); :e to reload',

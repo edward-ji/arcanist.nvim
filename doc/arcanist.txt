@@ -105,9 +105,10 @@ WRITING                                                       *arcanist-write*
 `:w` pushes the buffer back to Phorge. Only the fields you actually changed
 are sent. See |arcanist-fields| for what the buffer's shape means.
 
-If the object changed on the server since you opened it, the write stops and
-says so rather than overwriting somebody else's edit. Your buffer is left
-modified and you have three ways out: >
+If one of these fields changed on the server since you opened it, the write
+stops and says so rather than overwriting somebody else's edit. Anything a
+write cannot reach -- a new comment, a subscriber -- is not a conflict and
+does not stop it. Your buffer is left modified and you have three ways out: >
 
     :w /tmp/mine       keep a copy of your version first
     :e!                discard yours and reload theirs
@@ -205,6 +206,11 @@ That claim is what lets an ordinary file go back where it came from: >vim
 <
 Pushing to some other object is refused rather than done quietly. Delete the
 line to allow it.
+
+A buffer saved out this way keeps what it knows about the object: `:ArcWrite`
+still sends only the fields you edited, and still stops if the object changed
+on the server since it loaded. Reopen the file later, in a buffer that never
+held the object, and neither is true -- everything in it is sent, unchecked.
 
 FINDING THE TARGET
 
