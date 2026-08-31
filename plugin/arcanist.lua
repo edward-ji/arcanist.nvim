@@ -19,3 +19,5 @@ require('arcanist.reference').setup()
 -- in exactly the session you'd want it: a normal source file in a working
 -- copy.
 require('arcanist.command').setup()
+
+require('arcanist.icon').setup()

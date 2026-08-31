@@ -87,6 +87,14 @@ The bare word is only honoured for the languages Phorge itself recognises
 there; any other word is the block's first line of code, as it is in Phorge.
 A language Neovim has no parser installed for is left unhighlighted.
 
+ICON                                                           *arcanist-icon*
+
+A Remarkup file is shown with Phabricator's own glyph in file pickers, tab
+lines and statuslines, if you have nvim-web-devicons or mini.icons installed.
+Neither is required. The glyph is a Nerd Font one, so it is skipped when you
+have said you have none -- `vim.g.have_nerd_font` set to false, or mini.icons
+run with `style = 'ascii'`.
+
 ==============================================================================
 3. ARCANIST:// BUFFERS                                      *arcanist-buffers*
                                                                  *arcanist://*
