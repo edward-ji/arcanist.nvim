@@ -233,6 +233,25 @@ Table with delimiter row and inline cell content
       cell: (table_cell (mention name: (username))))))
 
 ==================
+Empty and blank table cells keep their separators
+==================
+| a || b |
+| c |  | d
+|
+
+---
+
+(document
+  (table
+    (table_row
+      cell: (table_cell (text))
+      cell: (table_cell (text)))
+    (table_row
+      cell: (table_cell (text))
+      cell: (table_cell (text)))
+    (table_row)))
+
+==================
 Embed block on its own line
 ==================
 {meme, src=grumpy}

@@ -51,6 +51,10 @@ function sepBy1(sep, rule) {
   return seq(rule, repeat(seq(sep, rule)));
 }
 
+function tableCell($) {
+  return field('cell', alias(repeat1($._inline_elt), $.table_cell));
+}
+
 // `char` repeated `min` or more times. Deliberately NOT written as a regex
 // like /-{3,}/: tree-sitter 0.26.12's regex compiler mishandles open-ended
 // `{n,}` quantifiers (confirmed in isolation -- a grammar containing only
@@ -488,11 +492,17 @@ module.exports = grammar({
     )),
 
     // The trailing '|' before the newline is optional (as in GFM tables) --
-    // only the pipes *between* cells are required.
+    // only the pipes *between* cells are required, and a pipe at end of line
+    // closes the row rather than opening one more, empty cell (as Phorge's
+    // `rtrim($line, '|')` does).
+    //
+    // Empty and blank cells ("| a || b |") are legal -- Phorge renders an
+    // empty <td> -- but contribute no `table_cell` node: tree-sitter rejects
+    // any rule that can match the empty string.
     table_row: $ => seq(
       '|',
-      sepBy1('|', field('cell', alias(repeat1($._inline_elt), $.table_cell))),
-      optional('|'),
+      repeat(seq(optional(tableCell($)), '|')),
+      optional(tableCell($)),
       '\n',
     ),
 

@@ -916,7 +916,7 @@
     "fields": {
       "cell": {
         "multiple": true,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "table_cell",
