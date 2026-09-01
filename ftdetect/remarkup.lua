@@ -32,5 +32,23 @@ vim.filetype.add({
         ['.*/edit%.[^/]+/differential%-update%-comments'] = 'remarkup',
         ['.*/edit%.[^/]+/new%-commit'] = 'remarkup',
         ['.*/edit%.[^/]+/arcanist%-patch%-commit%-message'] = 'remarkup',
+
+        -- A guess from content, for a file whose name said nothing. A
+        -- negative priority is Neovim's hook for that: it runs after every
+        -- full path, basename, pattern and extension has had its turn, so it
+        -- never displaces a rule about a name. It does run ahead of Neovim's
+        -- own content checks, though, so it can outrank a shebang. See
+        -- arcanist.detect for what it looks for; required lazily, as this
+        -- runs for every otherwise-unrecognised buffer.
+        ['.*'] = {
+            function(_, bufnr)
+                -- vim.filetype.match() can be called with a filename and no
+                -- buffer; a nil bufnr would silently mean the current one.
+                if bufnr then
+                    return require('arcanist.detect').match(bufnr)
+                end
+            end,
+            { priority = -math.huge },
+        },
     },
 })

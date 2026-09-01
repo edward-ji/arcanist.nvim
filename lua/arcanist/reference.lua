@@ -475,6 +475,15 @@ local function identity_of(bufnr)
     return prefix, id
 end
 
+--- The filetype for the object `bufnr`'s identity line names, if it names
+--- one: the same HANDLERS entry an "arcanist://" buffer of it would get.
+--- @param bufnr integer
+--- @return string?
+function M.filetype_of(bufnr)
+    local prefix = identity_of(bufnr)
+    return prefix and HANDLERS[prefix].filetype
+end
+
 --- Push `lines` (from `bufnr`) to `prefix`+`id` over Conduit. When `bufnr`
 --- is itself the "arcanist://<ref>" buffer being updated, runs the
 --- staleness guard first (unless `force`) and refreshes its

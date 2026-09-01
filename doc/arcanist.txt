@@ -53,6 +53,15 @@ A ".remarkup" file is detected too. Nobody else uses that extension; it is the
 one to give a Phorge object you save out to an ordinary file, so reopening
 it is Remarkup again.
 
+A file whose name says nothing is read for its last line. A document saved
+out of an "arcanist://" buffer ends with the line naming the object it is --
+"Maniphest Task: T123" -- and a file ending that way is taken for Remarkup,
+extension or no. See |arcanist-identity| for what counts as one.
+
+It is a guess: any text ending in such a line is read the same way, `git log`
+output for a landed revision included. Turn it off with
+|arcanist-config-detect.identity|.
+
 Anywhere else, ask for it: >vim
 
     :set filetype=remarkup
@@ -231,6 +240,8 @@ A buffer saved out this way keeps what it knows about the object: `:ArcWrite`
 still sends only the fields you edited, and still stops if the object changed
 on the server since it loaded. Reopen the file later, in a buffer that never
 held the object, and neither is true -- everything in it is sent, unchecked.
+The line is enough to make the file Remarkup again, though, whatever it is
+named; see |arcanist-remarkup|.
 
 FINDING THE TARGET
 
@@ -429,6 +440,9 @@ works without it. These are the defaults: >lua
             mention_kind = 'Reference',
             project_kind = 'Module',
         },
+        detect = {
+            identity = true,
+        },
         conduit_timeout = 10000,
     })
 <
@@ -452,6 +466,12 @@ completion.mention_kind ~
                                      *arcanist-config-completion.project_kind*
 completion.project_kind ~
     The same, for #project items.
+
+                                             *arcanist-config-detect.identity*
+detect.identity ~
+    Whether a file no filename rule identified is read as Remarkup when its
+    last line names a Phorge object. Set to false to leave such files alone.
+    See |arcanist-remarkup|.
 
                                              *arcanist-config-conduit_timeout*
 conduit_timeout ~

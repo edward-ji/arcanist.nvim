@@ -11,9 +11,14 @@ local M = {}
 --- @field project_kind string `vim.lsp.protocol.CompletionItemKind` name
 --- used for #project completion items.
 
+--- @class arcanist.DetectConfig
+--- @field identity boolean Read a file no filename rule matched as Remarkup
+--- when its last line names a Phorge object.
+
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
 --- @field completion arcanist.CompletionConfig
+--- @field detect arcanist.DetectConfig
 --- @field conduit_timeout integer Milliseconds to wait on a blocking
 --- Conduit call (i.e. `:w` on an "arcanist://" buffer) before giving up.
 
@@ -26,6 +31,9 @@ local default_config = {
     completion = {
         mention_kind = 'Reference',
         project_kind = 'Module',
+    },
+    detect = {
+        identity = true,
     },
     conduit_timeout = 10000,
 }
