@@ -81,6 +81,17 @@ const PREC = {
   SETEXT_UNDERLINE: 3,
 };
 
+// The body of an object reference -- "T123", "R12:1000", "rXYZ:af3192cd5",
+// "D123#comment-4" -- shared by `object_reference` and `object_embed`.
+const OBJECT_REF = seq(
+  choice(
+    seq(/[BCDEFHJKLMOPQTUVWZ]/, /[1-9]\d*/),
+    seq('R', /[1-9]\d*/, optional(seq(':', choice(/[1-9]\d*/, /[a-f0-9]{5,40}/)))),
+    seq('r', /[A-Z]+/, optional(':'), choice(/[1-9]\d*/, /[a-f0-9]{5,40}/)),
+  ),
+  optional(seq('#', /[A-Za-z0-9_-]+/)),
+);
+
 // ---------------------------------------------------------------------
 // The `text` fallback token, built once here because `text` and
 // `_table_text` need the same structure with different single-char
@@ -154,8 +165,8 @@ function textToken(fallback) {
 const INLINE_ELEMENTS = [
   'bold', 'italic', 'monospace', 'monospace_alt', 'strikethrough',
   'underline', 'highlighted', 'wiki_link', 'md_link', 'angle_url',
-  'bare_url', 'mention', 'project_tag', 'object_reference', 'embed',
-  'hex_color', 'text',
+  'bare_url', 'mention', 'project_tag', 'object_reference', 'object_embed',
+  'embed', 'hex_color', 'text',
 ];
 
 function inlineChoice($, excludeName) {
@@ -515,7 +526,7 @@ module.exports = grammar({
     // Standalone embed / macro blocks, e.g. {nav ...}, {meme ...}
     // when they occupy their own line.
     // ---------------------------------------------------------------
-    embed_block: $ => prec.dynamic(1, seq($.embed, '\n')),
+    embed_block: $ => prec.dynamic(1, seq(choice($.embed, $.object_embed), '\n')),
 
     // ---------------------------------------------------------------
     // Paragraphs: fallback run of inline content
@@ -678,17 +689,27 @@ module.exports = grammar({
     // into two terminals let the lexer commit to "this looks like an
     // object ref" for any bare word and then fail once no digit followed,
     // which broke plain-prose parsing entirely.
-    object_reference: $ => token(prec(PREC.OBJECT_REF, seq(
-      choice(
-        seq(/[BCDEFHJKLMOPQTUVWZ]/, /[1-9]\d*/),
-        seq('R', /[1-9]\d*/, optional(seq(':', choice(/[1-9]\d*/, /[a-f0-9]{5,40}/)))),
-        seq('r', /[A-Z]+/, optional(':'), choice(/[1-9]\d*/, /[a-f0-9]{5,40}/)),
-      ),
-      optional(seq('#', /[A-Za-z0-9_-]+/)),
-    ))),
+    object_reference: $ => token(prec(PREC.OBJECT_REF, OBJECT_REF)),
 
-    // {D123}, {F123, layout=left, alt="a duckling"}, {icon camera color=blue},
-    // {key command option shift 3}, {nav ...}, {meme, ...}, {anchor #xyz}
+    // {T123}, {D456}, {F7, layout=left, alt="a duckling"} -- the braced form
+    // of an object reference (PhabricatorObjectRemarkupRule's embed pattern,
+    // `\B{PREFIX(ID)([,\s]...)?}\B`, tried before its bare reference
+    // pattern). Phorge renders it larger -- a full-title link, or the file
+    // itself -- but it names the same object.
+    //
+    // The opening '{' is part of the reference token, for the same lexer
+    // reason as `embed`'s below; consumers of the node text strip it.
+    object_embed: $ => seq(
+      field('ref', alias($._object_embed_open, $.object_reference)),
+      optional(field('options', alias(/[^}\n]*/, $.embed_options))),
+      '}',
+    ),
+    // Explicit precedence, not match length, is what makes this beat
+    // `_embed_open` on "{T123" and lose to `_embed_open_guard` on "{T123x".
+    _object_embed_open: $ => token(prec(PREC.OBJECT_REF, seq('{', OBJECT_REF))),
+
+    // {icon camera color=blue}, {key command option shift 3},
+    // {nav ...}, {meme, ...}, {anchor #xyz}
     // The opening '{' is merged atomically with the mandatory first kind
     // character into one token (same fix as object_reference above): if
     // '{' were a separate literal token, the lexer would always shift it
@@ -703,11 +724,16 @@ module.exports = grammar({
     // captured node (contrast the closing '}', which stays literal) --
     // see the highlights query for how that's handled.
     embed: $ => seq(
-      field('kind', alias($._embed_open, $.embed_kind)),
+      field('kind', alias(
+        choice($._embed_open, $._embed_open_guard), $.embed_kind)),
       optional(field('options', alias(/[^}\n]*/, $.embed_options))),
       '}',
     ),
     _embed_open: $ => token(seq('{', /[A-Za-z][A-Za-z0-9]*/)),
+    // "{T123x}" -- a braced word that only looks like a reference, guarded
+    // exactly as `text` guards the unbraced "T123x".
+    _embed_open_guard: $ => token(prec(PREC.OBJECT_REF_GUARD,
+      seq('{', /[BCDEFHJKLMOPQRTUVWZ][1-9]\d*[A-Za-z_]\w*/))),
 
     // {#f00} / {#ff0000} color chips (PhutilRemarkupHexColorCodeRule).
     hex_color: $ => token(seq(

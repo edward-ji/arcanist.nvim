@@ -73,7 +73,7 @@
 (table_delimiter_row) @punctuation.special
 
 ;; ---------------------------------------------------------------------
-;; Embeds: {D123}, {icon camera}, {nav ...}, standalone {meme ...} etc.
+;; Embeds: {icon camera}, {nav ...}, standalone {meme ...} etc.
 ;; ---------------------------------------------------------------------
 ;; The opening '{' is lexed as part of `embed_kind` itself (see grammar.js
 ;; for why -- it's what keeps `{}` from being misparsed as an embed whose
@@ -83,6 +83,11 @@
 (embed "}" @punctuation.bracket)
 (embed kind: (embed_kind) @function.macro)
 (embed options: (embed_options) @string)
+
+;; {T123}, {F7, layout=left} -- a braced object reference. Its `ref` is an
+;; ordinary `object_reference`, captured with the other links below.
+(object_embed "}" @punctuation.bracket)
+(object_embed options: (embed_options) @string)
 
 ;; ---------------------------------------------------------------------
 ;; Inline emphasis
@@ -161,4 +166,5 @@
 (project_tag) @nospell
 (object_reference) @nospell
 (embed) @nospell
+(object_embed) @nospell
 (hex_color) @nospell

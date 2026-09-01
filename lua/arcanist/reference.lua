@@ -782,9 +782,10 @@ local function push_command(cmd_args)
     push(bufnr, handler, prefix, id, lines, cmd_args.bang)
 end
 
---- Return the "arcanist://<ref>" URI for the object_reference node at the
---- (0-indexed, byte-offset) `row`/`col` in `bufnr`, or nil if there isn't
---- one there, or it's a type we don't support opening yet.
+--- Return the "arcanist://<ref>" URI for the object reference at the
+--- (0-indexed, byte-offset) `row`/`col` in `bufnr` -- bare ("T123") or
+--- braced ("{T123}") -- or nil if there isn't one there, or it's a type we
+--- don't support opening yet.
 --- @param bufnr integer
 --- @param row integer
 --- @param col integer
@@ -799,14 +800,23 @@ function M.at(bufnr, row, col)
     parser:parse()
 
     local node = vim.treesitter.get_node({ bufnr = bufnr, pos = { row, col } })
+
+    -- "{T123}" keeps its reference in an object_embed's `ref` field, and the
+    -- cursor may be on the options or the closing brace instead.
+    if node and node:type() == 'embed_options' then
+        node = node:parent()
+    end
+    if node and node:type() == 'object_embed' then
+        node = node:field('ref')[1]
+    end
     if not node or node:type() ~= 'object_reference' then
         return nil
     end
 
-    -- Drop a trailing "#123" comment anchor (as in "T123#456") -- opens the
-    -- object itself; jumping straight to the anchored comment is future
-    -- work.
-    local text = vim.treesitter.get_node_text(node, bufnr):match('^[^#]+')
+    -- Drop the leading "{" of a braced reference and a trailing "#123"
+    -- comment anchor (as in "T123#456") -- opens the object itself; jumping
+    -- straight to the anchored comment is future work.
+    local text = vim.treesitter.get_node_text(node, bufnr):match('^{?([^#]+)')
     local prefix, id = parse_ref(text)
     if not (prefix and HANDLERS[prefix]) then
         return nil

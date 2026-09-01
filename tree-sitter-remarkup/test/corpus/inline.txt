@@ -277,8 +277,8 @@ Inline embeds and color chips
 
 (document
   (paragraph
-    (embed
-      kind: (embed_kind)
+    (object_embed
+      ref: (object_reference)
       options: (embed_options))
     (text)
     (embed
@@ -287,6 +287,50 @@ Inline embeds and color chips
     (text)
     (hex_color)
     (text)))
+
+==================
+A braced object reference is still an object reference
+==================
+T123 and {T123} and {F7, layout=left} and {rXYZ:af3192cd5} and {T123#4}
+
+---
+
+(document
+  (paragraph
+    (object_reference)
+    (text)
+    (object_embed
+      ref: (object_reference)
+      options: (embed_options))
+    (text)
+    (object_embed
+      ref: (object_reference)
+      options: (embed_options))
+    (text)
+    (object_embed
+      ref: (object_reference)
+      options: (embed_options))
+    (text)
+    (object_embed
+      ref: (object_reference)
+      options: (embed_options))))
+
+==================
+A braced word that merely looks like a reference is an ordinary embed
+==================
+{T123x} and {icon camera}
+
+---
+
+(document
+  (paragraph
+    (embed
+      kind: (embed_kind)
+      options: (embed_options))
+    (text)
+    (embed
+      kind: (embed_kind)
+      options: (embed_options))))
 
 ==================
 Stray braces do not derail the line

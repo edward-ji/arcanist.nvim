@@ -111,6 +111,10 @@
           "named": true
         },
         {
+          "type": "object_embed",
+          "named": true
+        },
+        {
           "type": "object_reference",
           "named": true
         },
@@ -259,6 +263,10 @@
         {
           "type": "embed",
           "named": true
+        },
+        {
+          "type": "object_embed",
+          "named": true
         }
       ]
     }
@@ -348,6 +356,10 @@
           "named": true
         },
         {
+          "type": "object_embed",
+          "named": true
+        },
+        {
           "type": "object_reference",
           "named": true
         },
@@ -425,6 +437,10 @@
         },
         {
           "type": "monospace_alt",
+          "named": true
+        },
+        {
+          "type": "object_embed",
           "named": true
         },
         {
@@ -568,6 +584,32 @@
     }
   },
   {
+    "type": "object_embed",
+    "named": true,
+    "fields": {
+      "options": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "embed_options",
+            "named": true
+          }
+        ]
+      },
+      "ref": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "object_reference",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "paragraph",
     "named": true,
     "fields": {},
@@ -617,6 +659,10 @@
         },
         {
           "type": "monospace_alt",
+          "named": true
+        },
+        {
+          "type": "object_embed",
           "named": true
         },
         {
@@ -731,6 +777,10 @@
           "named": true
         },
         {
+          "type": "object_embed",
+          "named": true
+        },
+        {
           "type": "object_reference",
           "named": true
         },
@@ -822,6 +872,10 @@
         },
         {
           "type": "monospace_alt",
+          "named": true
+        },
+        {
+          "type": "object_embed",
           "named": true
         },
         {
@@ -925,6 +979,10 @@
           "named": true
         },
         {
+          "type": "object_embed",
+          "named": true
+        },
+        {
           "type": "object_reference",
           "named": true
         },
@@ -1001,6 +1059,10 @@
         },
         {
           "type": "monospace_alt",
+          "named": true
+        },
+        {
+          "type": "object_embed",
           "named": true
         },
         {
