@@ -163,7 +163,7 @@ local function order_args(fargs)
     return vim.list_extend(flags, paths)
 end
 
---- Complete ":ArcList [query] <type>".
+--- Complete ":ArcList [query] [type]".
 ---
 --- The first word may be either a query or a type; the second offers only
 --- the types accepting the query already typed, so ":ArcList open <Tab>"
@@ -263,29 +263,28 @@ function M.setup()
             .. 'and start over.',
     })
 
-    -- Parsed from the end: the type is always the last word, which is what
-    -- makes "[query] <type>" unambiguous.
     vim.api.nvim_create_user_command('ArcList', function(args)
         local fargs = args.fargs
         if #fargs > 2 then
-            require('arcanist.notify').err('ArcList takes at most two arguments: [query] <type>')
+            require('arcanist.notify').err('ArcList takes at most two arguments: [query] [type]')
             return
         end
 
-        -- One argument leaves the query index at 0 and none leaves both
-        -- nil -- which arcanist.list reads as "the default query" and
-        -- "every type", so neither case needs a branch.
-        require('arcanist').list({
-            query_key = fargs[#fargs - 1],
-            type = fargs[#fargs],
-        })
+        -- Both arguments are optional, so a lone word is whichever of the
+        -- two it names.
+        local query_key, type_name = fargs[1], fargs[2]
+        if #fargs == 1 and require('arcanist.reference').type_named(fargs[1]) then
+            query_key, type_name = nil, fargs[1]
+        end
+
+        require('arcanist').list({ query_key = query_key, type = type_name })
     end, {
         nargs = '*',
         complete = complete_list,
-        desc = 'Browse Phorge tasks and revisions in a picker and open the chosen one. '
-            .. 'Takes "[query] <type>", reading as English -- ":ArcList open tasks", '
-            .. '":ArcList active revisions". The query defaults to "all", and an '
-            .. 'omitted type lists every type.',
+        desc = 'Browse Phorge tasks or revisions in a picker and open the chosen one. '
+            .. 'Takes "[query] [type]", reading as English -- ":ArcList open tasks", '
+            .. '":ArcList active revisions". The query defaults to "all" and the '
+            .. 'type to revisions.',
     })
 end
 

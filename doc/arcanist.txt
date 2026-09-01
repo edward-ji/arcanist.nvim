@@ -369,7 +369,7 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
 ------------------------------------------------------------------------------
                                                                     *:ArcList*
 :ArcList [query] [type]
-                        Browse tasks and revisions in a picker and open the
+                        Browse tasks or revisions in a picker and open the
                         one you choose.
 
                         The arguments read as English: >vim
@@ -384,9 +384,9 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
                         "subscribed", "open" and "all"; revisions accept
                         "active", "authored" and "all". It defaults to "all".
 
-                        [type] is "task"/"tasks" or "revision"/"revisions".
-                        Omit it and both are listed together, most recently
-                        modified first.
+                        [type] is "task"/"tasks" or "revision"/"revisions",
+                        and defaults to revisions. Results are listed most
+                        recently modified first.
 
                         The picker is whatever |vim.ui.select()| is bound to,
                         so a fuzzy finder renders it if you have one.
@@ -492,11 +492,11 @@ require('arcanist').list({opts})
     The implementation behind |:ArcList|, for binding to a key. {opts} is a
     table, all keys optional:
 
-        type        string or list of strings: "task", "revision", or their
-                    plurals. Omitted lists every supported type.
+        type        "task", "revision", or their plurals. Defaults to
+                    "revisions".
         query_key   one of the type's builtin queries. Defaults to "all".
-        limit       results to fetch per type. Defaults to 100, which is also
-                    the most Phorge will return.
+        limit       results to fetch. Defaults to 100, which is also the most
+                    Phorge will return.
 
     For example: >lua
 
