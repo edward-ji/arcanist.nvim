@@ -24,6 +24,11 @@ local DEFAULT_QUERY_KEY = 'all'
 --- The type listed when none was named.
 local DEFAULT_TYPE = 'revisions'
 
+--- The word standing for whoever is logged in, and the Phorge typeahead
+--- function it becomes. Both constraints it can land on evaluate the
+--- function server-side, so nothing here has to ask who the viewer is.
+local VIEWER = { word = 'me', token = 'viewer()' }
+
 --- One Phorge page, which is also Phorge's ceiling: Conduit rejects any
 --- limit above 100 with ERR-INVALID-PAGE-SIZE, so `limit` can only be
 --- lowered. Unlike arcanist.source this deliberately does not follow the
@@ -47,6 +52,38 @@ local function resolve_type(want)
             )
     end
     return entry
+end
+
+--- `filters` as the `constraints` map its type's search method takes, or
+--- nil and a message naming the filters this type does take -- Conduit's
+--- own ERR-INVALID-CONSTRAINT names none of them.
+--- @param handler table
+--- @param filters table<string, string[]>?
+--- @return table? constraints
+--- @return string? err
+local function resolve_filters(handler, filters)
+    local constraints = {}
+    for name, users in pairs(filters or {}) do
+        local key = handler.filters[name]
+        if not key then
+            local accepted = vim.tbl_keys(handler.filters)
+            table.sort(accepted)
+            return nil,
+                string.format(
+                    '%q is not a %s filter -- expected one of: %s',
+                    name,
+                    handler.type,
+                    table.concat(accepted, ', ')
+                )
+        end
+
+        local values = {}
+        for _, user in ipairs(users) do
+            values[#values + 1] = user == VIEWER.word and VIEWER.token or user
+        end
+        constraints[key] = values
+    end
+    return constraints
 end
 
 --- Upper-case the first letter. Deliberately not a general title-caser:
@@ -111,6 +148,9 @@ end
 --- Defaults to "revisions".
 --- @field query_key? string One of the type's builtin Phorge queries (see
 --- HANDLERS in arcanist.reference). Defaults to "all".
+--- @field filters? table<string, string[]> Users to narrow to, keyed by one
+--- of the type's filters (see HANDLERS in arcanist.reference). "me" stands
+--- for whoever is logged in.
 --- @field limit? integer Results to fetch. Defaults to 100.
 
 --- Pick a task or revision and open it as an "arcanist://" buffer.
@@ -143,15 +183,26 @@ function M.list(opts)
         return
     end
 
+    local constraints, filter_err = resolve_filters(handler, opts.filters)
+    if not constraints then
+        notify.err(filter_err)
+        return
+    end
+
     local limit = opts.limit or DEFAULT_LIMIT
     local what = handler.plural
     -- Hoisted out of the callback: the title field is a property of the
     -- type, so looking it up once beats once per result.
     local title = fields.title_field(handler.fields)
 
+    local params = { queryKey = query_key, limit = limit }
+    if next(constraints) then
+        params.constraints = constraints
+    end
+
     conduit.call(
         handler.search,
-        { queryKey = query_key, limit = limit },
+        params,
         function(ok, response, call_err)
             if not ok then
                 notify.err(string.format('failed to list %s: %s', what, call_err))

@@ -163,12 +163,68 @@ local function order_args(fargs)
     return vim.list_extend(flags, paths)
 end
 
---- Complete ":ArcList [query] [type]".
+--- Split ":ArcList" arguments into the positional "[query] [type]" and the
+--- "key=value" filters. No type name or builtin query key contains an "=",
+--- so position never has to tell the two apart.
+--- @param fargs string[]
+--- @return arcanist.ListOpts? opts
+--- @return string? err
+local function parse_list(fargs)
+    local words, filters = {}, {}
+    for _, arg in ipairs(fargs) do
+        local name, value = arg:match('^([^=]*)=(.*)$')
+        if not name then
+            words[#words + 1] = arg
+        elseif name == '' then
+            return nil, string.format('%q needs a filter name before the "="', arg)
+        elseif filters[name] then
+            return nil, string.format('%q is set twice', name)
+        else
+            local users = vim.split(value, ',', { plain = true, trimempty = true })
+            if #users == 0 then
+                return nil, string.format('%q needs a value', name)
+            end
+            filters[name] = users
+        end
+    end
+
+    if #words > 2 then
+        return nil, 'ArcList takes at most two arguments: [query] [type]'
+    end
+
+    -- Both are optional, so a lone word is whichever of the two it names.
+    local query_key, type_name = words[1], words[2]
+    if #words == 1 and require('arcanist.reference').type_named(words[1]) then
+        query_key, type_name = nil, words[1]
+    end
+
+    return { query_key = query_key, type = type_name, filters = filters }
+end
+
+--- The filter words `type_word` accepts, or every type's when no type is
+--- settled yet -- the same union the query keys get offered as.
+--- @param reference table
+--- @param type_word string?
+--- @return string[]
+local function filter_keys(reference, type_word)
+    local keys = {}
+    for _, name in ipairs(type_word and { type_word } or reference.types()) do
+        for key in pairs(reference.type_named(name).handler.filters) do
+            keys[key] = true
+        end
+    end
+    keys = vim.tbl_keys(keys)
+    table.sort(keys)
+    return keys
+end
+
+--- Complete ":ArcList [query] [type] [key=value...]".
 ---
 --- The first word may be either a query or a type; the second offers only
 --- the types accepting the query already typed, so ":ArcList open <Tab>"
 --- offers "tasks" and nothing else (Differential has no "open" builtin).
 --- Types are offered in the plural; type_named() takes either spelling.
+--- Filters are offered wherever they may be written, which is anywhere.
 --- @param arg_lead string
 --- @param cmd_line string
 --- @param cursor_pos integer
@@ -181,35 +237,64 @@ local function complete_list(arg_lead, cmd_line, cursor_pos)
         words[#words] = nil
     end
     table.remove(words, 1) -- the command name
-    -- `words` is now exactly the arguments already settled.
+
+    -- Only the positional words place the next one, and the last type named
+    -- among them is the one whose filters apply.
+    local settled, type_word, used = {}, nil, {}
+    for _, word in ipairs(words) do
+        local name = word:match('^([^=]*)=')
+        if name then
+            used[name] = true
+        else
+            settled[#settled + 1] = word
+            if reference.type_named(word) then
+                type_word = word
+            end
+        end
+    end
+
+    local keys = vim.tbl_filter(function(key)
+        return not used[key]
+    end, filter_keys(reference, type_word))
+
+    -- Past the "=" a username is all that can follow, and only the viewer
+    -- has a spelling this can know without asking Conduit.
+    local lead_key = arg_lead:match('^([^=]+)=')
+    if lead_key then
+        if not vim.list_contains(keys, lead_key) then
+            return {}
+        end
+        return vim.tbl_filter(function(candidate)
+            return vim.startswith(candidate, arg_lead)
+        end, { lead_key .. '=me' })
+    end
 
     local candidates = {}
-    if #words == 0 then
+    if #settled == 0 then
         -- Grouped rather than interleaved: the two answer different
         -- questions, and mixing them makes the menu read as noise.
-        local keys = {}
+        local query_keys = {}
         for _, name in ipairs(reference.types()) do
             local handler = reference.type_named(name).handler
             candidates[#candidates + 1] = handler.plural
             for _, key in ipairs(handler.query_keys) do
-                keys[key] = true
+                query_keys[key] = true
             end
         end
-        keys = vim.tbl_keys(keys)
-        table.sort(keys)
-        vim.list_extend(candidates, keys)
-    elseif #words == 1 then
-        -- Nothing may follow a type -- it is already the last word -- so a
-        -- first word naming one completes to nothing.
-        if reference.type_named(words[1]) then
-            return {}
-        end
+        query_keys = vim.tbl_keys(query_keys)
+        table.sort(query_keys)
+        vim.list_extend(candidates, query_keys)
+    elseif #settled == 1 and not type_word then
         for _, name in ipairs(reference.types()) do
             local handler = reference.type_named(name).handler
-            if vim.list_contains(handler.query_keys, words[1]) then
+            if vim.list_contains(handler.query_keys, settled[1]) then
                 candidates[#candidates + 1] = handler.plural
             end
         end
+    end
+
+    for _, key in ipairs(keys) do
+        candidates[#candidates + 1] = key .. '='
     end
 
     return vim.tbl_filter(function(candidate)
@@ -264,27 +349,22 @@ function M.setup()
     })
 
     vim.api.nvim_create_user_command('ArcList', function(args)
-        local fargs = args.fargs
-        if #fargs > 2 then
-            require('arcanist.notify').err('ArcList takes at most two arguments: [query] [type]')
+        local opts, err = parse_list(args.fargs)
+        if not opts then
+            require('arcanist.notify').err(err)
             return
         end
 
-        -- Both arguments are optional, so a lone word is whichever of the
-        -- two it names.
-        local query_key, type_name = fargs[1], fargs[2]
-        if #fargs == 1 and require('arcanist.reference').type_named(fargs[1]) then
-            query_key, type_name = nil, fargs[1]
-        end
-
-        require('arcanist').list({ query_key = query_key, type = type_name })
+        require('arcanist').list(opts)
     end, {
         nargs = '*',
         complete = complete_list,
         desc = 'Browse Phorge tasks or revisions in a picker and open the chosen one. '
             .. 'Takes "[query] [type]", reading as English -- ":ArcList open tasks", '
             .. '":ArcList active revisions". The query defaults to "all" and the '
-            .. 'type to revisions.',
+            .. 'type to revisions. Narrow further with "owner=" and "author=", '
+            .. 'each a comma-separated list of usernames in which "me" stands for '
+            .. 'you -- ":ArcList open tasks owner=me".',
     })
 end
 

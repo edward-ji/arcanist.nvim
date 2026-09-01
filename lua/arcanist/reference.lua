@@ -106,9 +106,13 @@ local PRIORITY = fields.value_source({
 -- has no "open", "assigned", "subscribed" or "reviewing" builtin, and
 -- asking for one is a hard ERR-BAD-QUERYKEY, not an empty result.
 --
+-- `filters` maps the words arcanist.list narrows by to the `constraints`
+-- key each one is on this type's search method. Differential has no
+-- assignee, so it has no "owner".
+--
 -- Only T/D for now -- P/F/M/C/r<repo> refs point at pastes, files, macros,
 -- commits, and repositories respectively; left for later.
---- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, type: string, plural: string, identity: string, query_keys: string[], fields: table[] }>
+--- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, type: string, plural: string, identity: string, query_keys: string[], filters: table<string, string>, fields: table[] }>
 local HANDLERS = {
     T = {
         search = 'maniphest.search',
@@ -119,6 +123,7 @@ local HANDLERS = {
         plural = 'tasks',
         identity = 'Maniphest Task',
         query_keys = { 'assigned', 'authored', 'subscribed', 'open', 'all' },
+        filters = { owner = 'assigned', author = 'authorPHIDs' },
         fields = {
             {
                 key = 'title',
@@ -166,6 +171,7 @@ local HANDLERS = {
         plural = 'revisions',
         identity = 'Differential Revision',
         query_keys = { 'active', 'authored', 'all' },
+        filters = { author = 'authorPHIDs' },
         fields = {
             {
                 key = 'title',

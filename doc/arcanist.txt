@@ -368,7 +368,7 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
 
 ------------------------------------------------------------------------------
                                                                     *:ArcList*
-:ArcList [query] [type]
+:ArcList [query] [type] [filter...]
                         Browse tasks or revisions in a picker and open the
                         one you choose.
 
@@ -387,6 +387,23 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
                         [type] is "task"/"tasks" or "revision"/"revisions",
                         and defaults to revisions. Results are listed most
                         recently modified first.
+
+                        Each [filter] is "key=value", written anywhere among
+                        the other arguments: >vim
+
+                            :ArcList open tasks owner=me
+                            :ArcList revisions author=alice
+                            :ArcList tasks author=alice,bob
+<
+                        "owner=" narrows tasks to whoever they are assigned
+                        to; revisions have no assignee and do not take it.
+                        "author=" narrows either to whoever filed it. The
+                        value is a comma-separated list of usernames, and
+                        "me" stands for whoever you are logged in as.
+
+                        A name Phorge does not know is not an error there --
+                        it simply matches nothing, so a typo reads as an
+                        empty list.
 
                         The picker is whatever |vim.ui.select()| is bound to,
                         so a fuzzy finder renders it if you have one.
@@ -495,18 +512,24 @@ require('arcanist').list({opts})
         type        "task", "revision", or their plurals. Defaults to
                     "revisions".
         query_key   one of the type's builtin queries. Defaults to "all".
+        filters     lists of usernames keyed by "owner" or "author", the
+                    same filters |:ArcList| takes. "me" is you.
         limit       results to fetch. Defaults to 100, which is also the most
                     Phorge will return.
 
     For example: >lua
 
         vim.keymap.set('n', '<leader>rr', function()
-            require('arcanist').list({ type = 'revision' })
-        end, { desc = 'Arc revisions' })
+            require('arcanist').list({ query_key = 'active' })
+        end, { desc = 'My active arc revisions' })
 
         vim.keymap.set('n', '<leader>rt', function()
-            require('arcanist').list({ type = 'task', query_key = 'open' })
-        end, { desc = 'Open arc tasks' })
+            require('arcanist').list({
+                type = 'task',
+                query_key = 'open',
+                filters = { owner = { 'me' } },
+            })
+        end, { desc = 'My open arc tasks' })
 <
 ==============================================================================
 10. RECIPES                                                *arcanist-recipes*
