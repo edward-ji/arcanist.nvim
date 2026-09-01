@@ -415,7 +415,7 @@ local function load_reference(bufnr, handler, prefix, id)
     end)
 end
 
---- The object `lines` says it is: the last non-blank line, labelled with one
+--- The object `bufnr` says it is: its last non-blank line, labelled with one
 --- of HANDLERS' `identity` spellings and naming a single object. The monogram
 --- decides the type; the label only qualifies the line as an identity at all.
 --- Answered off the raw text because it settles which type's field list to
@@ -431,25 +431,24 @@ end
 ---
 --- Naming nothing is not an error; the caller decides whether it needed a
 --- name. Looking like an identity but naming no one object is.
---- @param lines string[]
+--- @param bufnr integer
 --- @return string? prefix
 --- @return integer? id
 --- @return string? err
-local function identity_in(lines)
-    local last
-    for i = #lines, 1, -1 do
-        if vim.trim(lines[i]) ~= '' then
-            last = i
-            break
-        end
-    end
-    -- Line 1 is always the title (see fields.parse), so a lone identity line
-    -- is a title that looks like one.
-    if not last or last == 1 then
+local function identity_of(bufnr)
+    -- prevnonblank() answers "last line with anything on it" in one step,
+    -- for the current buffer -- hence nvim_buf_call, which switches to
+    -- `bufnr` without firing autocmds. Line 1 is always the title (see
+    -- fields.parse), so a lone identity line is a title that looks like one.
+    local lnum = vim.api.nvim_buf_call(bufnr, function()
+        return vim.fn.prevnonblank(vim.api.nvim_buf_line_count(bufnr))
+    end)
+    if lnum < 2 then
         return nil
     end
 
-    local label, value = vim.trim(lines[last]):match('^([^:]+):%s*(.*)$')
+    local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+    local label, value = vim.trim(line):match('^([^:]+):%s*(.*)$')
     local want = label and IDENTITY[label]
     if not want then
         return nil
@@ -530,7 +529,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
         return false
     end
 
-    local id_prefix, id_id, id_err = identity_in(lines)
+    local id_prefix, id_id, id_err = identity_of(bufnr)
     if id_err then
         notify.err(string.format('failed to update %s: %s', ref_name, id_err))
         return false
@@ -726,7 +725,7 @@ end
 
 --- Handle ":ArcWrite[!] [ref]". `ref` defaults to the current buffer's own
 --- reference if it's an "arcanist://" buffer, and otherwise to whatever its
---- identity line names (see identity_in). This is the way to push when the
+--- identity line names (see identity_of). This is the way to push when the
 --- target's own buffer is already open elsewhere -- see push()'s doc comment
 --- for why `:w` can't do that.
 --- @param cmd_args table nvim_create_user_command callback args
@@ -748,8 +747,7 @@ local function push_command(cmd_args)
         if not prefix then
             -- Nothing in the name to go on, so fall back to what the text
             -- says it is.
-            local id_prefix, id_id, id_err =
-                identity_in(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false))
+            local id_prefix, id_id, id_err = identity_of(bufnr)
             if id_err then
                 notify.err(':ArcWrite: ' .. id_err)
                 return
