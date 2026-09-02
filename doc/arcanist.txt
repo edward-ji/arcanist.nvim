@@ -520,8 +520,11 @@ require('arcanist').list({opts})
     For example: >lua
 
         vim.keymap.set('n', '<leader>rr', function()
-            require('arcanist').list({ query_key = 'active' })
-        end, { desc = 'My active arc revisions' })
+            require('arcanist').list({
+                query_key = 'active',
+                filters = { author = { 'me' } },
+            })
+        end, { desc = 'My open arc revisions' })
 
         vim.keymap.set('n', '<leader>rt', function()
             require('arcanist').list({
