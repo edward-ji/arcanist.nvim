@@ -23,7 +23,7 @@ arcanist.nvim brings Phorge into Neovim through `arc`, Phorge's command-line
 client. It has two halves.
 
 Remarkup -- Phorge's markup language -- becomes a filetype, with highlighting,
-completion for @mentions and #projects, |gd| on a T123 reference, and file
+completion for @mentions and #projects, |gf| on a T123 reference, and file
 upload on paste. That applies to any Remarkup buffer, including the temporary
 files `arc` opens in your editor. See |arcanist-remarkup|.
 
@@ -163,8 +163,8 @@ A Phorge object opens as a buffer named after it: >vim
 <
 Tasks (T) and revisions (D) are supported.
 
-You rarely have to type the URL. |gd| on a reference inside a Remarkup buffer
-opens it (see |arcanist-lsp|), and |:ArcList| opens whatever you pick.
+You rarely have to type the URL. |gf| on a reference inside a Remarkup buffer
+opens it (see |arcanist-gf|), and |:ArcList| opens whatever you pick.
 
 WRITING                                                       *arcanist-write*
 
@@ -219,7 +219,7 @@ and hands the buffer to that file. From then on it is an ordinary file:
                           so unpushed edits survive closing Neovim.
     :e! arcanist://T123   refetches from the server and overwrites the draft.
 
-The picker, |gd| and `:ArcList` still open `arcanist://T123`; that name just
+The picker, |gf| and `:ArcList` still open `arcanist://T123`; that name just
 redirects to the draft once one exists. Every file under `drafts.dir` opens
 as Remarkup. Drafts are one file per object and are never deleted for you --
 the directory is yours to prune.
@@ -353,14 +353,20 @@ spells the label in the plural.
 ==============================================================================
 5. COMPLETION AND GO-TO                                         *arcanist-lsp*
 
-Remarkup buffers get an in-editor language server, so these features arrive
-through the keymaps and completion plugin you already use rather than
-through anything specific to this plugin.
+@mention, #project and field-value completion arrive through an in-editor
+language server, so they use whatever completion plugin you already have.
+Go-to is Vim's own |gf| and needs nothing set up.
 
-GO-TO                                                    *arcanist-definition*
+GO-TO                                                            *arcanist-gf*
 
-|gd|, or |vim.lsp.buf.definition()|, on an object reference opens it as an
-"arcanist://" buffer.
+|gf| on an object reference -- "T123", or "{D456}" -- opens it as an
+"arcanist://" buffer. The rest of the |gf| family works too: |gF|,
+|CTRL-W_f| to open it in a split, |CTRL-W_gf| in a tab.
+
+It is wired through 'includeexpr', which Vim consults only when the text
+under the cursor is not already a path to an existing file. So a real
+filename under the cursor still opens that file, and a file named literally
+"T123" somewhere on your 'path' takes precedence over the task.
 
 COMPLETION                                               *arcanist-completion*
 

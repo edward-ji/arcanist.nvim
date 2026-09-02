@@ -1,13 +1,12 @@
 -- An in-process language server for remarkup buffers, exposing just enough
--- of the LSP surface -- textDocument/definition (T/D object references)
--- and textDocument/completion (@mention/#project, Status/Priority field
--- values) -- to reuse whatever `gd` keymap and completion setup you
--- already have, instead of bespoke keymaps/UI of our own.
+-- of the LSP surface -- textDocument/completion (@mention/#project,
+-- Status/Priority field values) -- to reuse whatever completion setup you
+-- already have, instead of bespoke UI of our own.
 --
 -- Runs in-process (`cmd` is a Lua function, not a subprocess): each
 -- "request" answers by inspecting the *live* client buffer directly via
--- arcanist.reference/arcanist.completion, so there's no document to keep
--- synced -- textDocument/didOpen and didChange are accepted and ignored.
+-- arcanist.completion, so there's no document to keep synced --
+-- textDocument/didOpen and didChange are accepted and ignored.
 
 local reference = require('arcanist.reference')
 local completion = require('arcanist.completion')
@@ -35,27 +34,11 @@ local function start_server(dispatchers)
                         -- plain byte offsets, matching what
                         -- vim.treesitter/nvim_win_get_cursor already use.
                         positionEncoding = 'utf-8',
-                        definitionProvider = true,
                         completionProvider = { triggerCharacters = { '@', '#' } },
                     },
                 })
             elseif method == 'shutdown' then
                 callback(nil, nil)
-            elseif method == 'textDocument/definition' then
-                local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
-                local pos = params.position
-                local uri = reference.at(bufnr, pos.line, pos.character)
-                if not uri then
-                    callback(nil, nil)
-                else
-                    callback(nil, {
-                        uri = uri,
-                        range = {
-                            start = { line = 0, character = 0 },
-                            ['end'] = { line = 0, character = 0 },
-                        },
-                    })
-                end
             elseif method == 'textDocument/completion' then
                 local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
                 local pos = params.position

@@ -32,11 +32,18 @@ if require('arcanist').config.paste.upload then
     require('arcanist.paste').setup()
 end
 
--- `gf` on a file monogram ("F123", "{F123}") previews it; on any other
--- monogram or word it is the built-in `gf`. A file monogram is literally "go
--- to file", but the download + viewer is a real side effect, so it stays on
--- an explicit `gf` keypress, not 'includeexpr' (which peek/hover plugins
--- also evaluate).
+-- 'includeexpr' hook so `gf` (and the rest of its family: `gF`, CTRL-W_f,
+-- CTRL-W_gf) on a T123 / {D456} reference opens it as an "arcanist://"
+-- buffer, and passes any other text through to Vim's ordinary file lookup.
+-- See arcanist.reference.gf.
+vim.opt_local.includeexpr = "v:lua.require'arcanist.reference'.gf(v:fname)"
+
+-- `gf` on a file monogram ("F123", "{F123}") previews it; any other
+-- monogram or word falls through to the built-in `gf`, which picks up
+-- T123/D456 references via 'includeexpr' above. A file monogram is
+-- literally "go to file", but the download + viewer is a real side
+-- effect, so it stays on an explicit `gf` keypress, not 'includeexpr'
+-- (which peek/hover plugins also evaluate).
 vim.keymap.set('n', 'gf', function()
     local monogram = require('arcanist.reference').monogram_at_cursor()
     if monogram and require('arcanist.file').file_id(monogram) then
@@ -49,6 +56,6 @@ vim.keymap.set('n', 'gf', function()
     end
 end, { buffer = true, desc = 'Preview a file monogram under the cursor, else built-in gf' })
 
--- Attach the "arcanist" LSP client (see lua/arcanist/lsp.lua for why), so
--- `gd` on a T123/D456/P789/... reference opens it in a scratch buffer.
+-- Attach the "arcanist" LSP client (see lua/arcanist/lsp.lua for why), for
+-- @mention / #project / field-value completion.
 require('arcanist.lsp').setup()

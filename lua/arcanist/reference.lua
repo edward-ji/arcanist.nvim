@@ -5,9 +5,9 @@
 -- The buffer scheme itself is driven by BufReadCmd/BufWriteCmd autocmds on
 -- "arcanist://*" -- the idiom fugitive.nvim uses for "fugitive://" -- so
 -- reading and writing happen here regardless of how a buffer was reached:
--- `:e`/`:w arcanist://T123` typed by hand, `arcanist.lsp`'s
--- textDocument/definition handler (see that module for why) resolving a
--- reference under the cursor via `M.at()`, or `:ArcWrite`.
+-- `:e`/`:w arcanist://T123` typed by hand, `gf` on a reference under the
+-- cursor (via the 'includeexpr' hook `M.gf()`, which resolves it with
+-- `M.at()`), or `:ArcWrite`.
 --
 -- Rendering and parsing are `arcanist.fields`' job -- see that module for
 -- the plain-text format and why every declared field is fully editable.
@@ -1003,6 +1003,20 @@ function M.at(bufnr, row, col)
     end
 
     return M.uri(prefix, id)
+end
+
+--- 'includeexpr' hook for Remarkup buffers. Returns the "arcanist://" URI
+--- for an object reference under the cursor -- `gf` and the rest of its
+--- family then open that via the BufReadCmd (see M.setup) -- or `fname`
+--- unchanged, so Vim's own file lookup handles anything else.
+---
+--- Vim only evaluates 'includeexpr' when the raw <cfile> is not already an
+--- existing file, so a real path under the cursor never reaches here.
+--- @param fname string Vim's extracted <cfile>, and the fallback.
+--- @return string
+function M.gf(fname)
+    local pos = vim.api.nvim_win_get_cursor(0)
+    return M.at(vim.api.nvim_get_current_buf(), pos[1] - 1, pos[2]) or fname
 end
 
 local installed = false

@@ -366,17 +366,13 @@ T['revisiting a hidden buffer via :buffer does not refetch; :e! does'] = functio
     eq(#calls('call-conduit maniphest.search'), 2)
 end
 
-T['gd on a reference opens it as an arcanist:// buffer'] = function()
+T['gf on a reference opens it as an arcanist:// buffer'] = function()
     helpers.fixture(
         dir,
         'call-conduit maniphest.search',
         task_response({ id = 5, title = 'Fix bug', description = 'Steps to reproduce.' })
     )
 
-    -- A real, named file: an unnamed scratch buffer's synthetic LSP URI
-    -- does not round-trip through vim.uri_to_bufnr() back to the same
-    -- buffer, which breaks the (in-process) "server" side of the
-    -- definition request -- confirmed live, not a theoretical concern.
     local probe = dir .. '/probe.rm'
     local f = assert(io.open(probe, 'w'))
     f:write('See T5 for details.\n')
@@ -385,7 +381,7 @@ T['gd on a reference opens it as an arcanist:// buffer'] = function()
     child.lua([[vim.bo.filetype = 'remarkup']])
     child.api.nvim_win_set_cursor(0, { 1, 5 }) -- inside "T5"
 
-    child.lua([[vim.lsp.buf.definition()]])
+    child.type_keys('gf')
     wait_until('vim.api.nvim_buf_get_name(0):match("arcanist://T5$") ~= nil')
     -- The buffer switch is synchronous; load_reference's own fetch is not.
     wait_until('vim.b[0].arcanist_loaded ~= nil')
