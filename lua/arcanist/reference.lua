@@ -17,6 +17,7 @@
 -- pick it up.
 
 local conduit = require('arcanist.conduit')
+local draft = require('arcanist.draft')
 local fields = require('arcanist.fields')
 local notify = require('arcanist.notify')
 
@@ -364,9 +365,48 @@ local function scheme_buffer(bufnr, scheme)
     end
 end
 
+--- Hand `bufnr` -- an "arcanist://<ref>" buffer whose BufReadCmd just fired --
+--- over to `ref`'s draft file. The draft is a plain Remarkup file, so from
+--- here on `:w` is an ordinary local write and the object lives on only in the
+--- identity line `:ArcWrite` reads back. `keepalt` keeps the alternate file
+--- off the husk, which wipes itself the moment we leave it.
+---
+--- `force` (`:e!`, after the file was just overwritten from the server) drops
+--- a draft buffer that is already open first, so the reopen reads the new
+--- file rather than switching back to the stale, possibly-modified buffer --
+--- switching to an existing buffer never reloads it.
+--- @param bufnr integer
+--- @param ref string
+--- @param force boolean
+local function redirect_to_draft(bufnr, ref, force)
+    vim.bo[bufnr].bufhidden = 'wipe'
+    local path = draft.path(ref)
+    vim.schedule(function()
+        -- The fetch is async; the user may have left the husk before it
+        -- landed. The draft file is written either way, so the next open
+        -- picks it up -- just don't yank them into a window they left.
+        if not vim.api.nvim_buf_is_valid(bufnr) or vim.api.nvim_get_current_buf() ~= bufnr then
+            return
+        end
+        if force then
+            for _, b in ipairs(vim.api.nvim_list_bufs()) do
+                if b ~= bufnr and vim.api.nvim_buf_get_name(b) == path then
+                    pcall(vim.api.nvim_buf_delete, b, { force = true })
+                end
+            end
+        end
+        vim.cmd('keepalt edit ' .. vim.fn.fnameescape(path))
+    end)
+end
+
 --- Populate `bufnr` (already named "arcanist://<ref>") by fetching
 --- `prefix`+`id` over Conduit. Asynchronous -- there's no reason to block
 --- the editor while a buffer loads; only `:w` blocks.
+---
+--- With drafts on, an "arcanist://" buffer is never a resting buffer: an
+--- existing draft is opened straight from disk with no network (`:e`), and
+--- otherwise the fetched object is written to the draft file and the buffer
+--- handed to it. `:e!` (`overwrite`) skips the existing draft and refetches.
 ---
 --- Progress and failures are reported through `vim.notify` rather than
 --- written into the buffer: a buffer holding the text "Loading T1..." looks
@@ -376,7 +416,15 @@ end
 --- @param handler table one of HANDLERS' values
 --- @param prefix string
 --- @param id integer
-local function load_reference(bufnr, handler, prefix, id)
+--- @param overwrite boolean from `:e!`
+local function load_reference(bufnr, handler, prefix, id, overwrite)
+    local ref = string.format('%s%d', prefix, id)
+
+    if draft.enabled() and not overwrite and draft.exists(ref) then
+        redirect_to_draft(bufnr, ref, false)
+        return
+    end
+
     scheme_buffer(bufnr, true)
     -- Non-editable while loading: this is what backstops a write racing the
     -- fetch (see push()), and an absent arcanist_loaded is what tells push()
@@ -411,10 +459,23 @@ local function load_reference(bufnr, handler, prefix, id)
             return
         end
 
+        local rendered = fields.render(handler.fields, obj)
+
+        if draft.enabled() then
+            local wrote, write_err = draft.write(ref, rendered)
+            if not wrote then
+                set_lines(bufnr, {}, false)
+                notify.err(write_err)
+                return
+            end
+            redirect_to_draft(bufnr, ref, overwrite)
+            return
+        end
+
         vim.bo[bufnr].filetype = handler.filetype
-        set_lines(bufnr, fields.render(handler.fields, obj), true)
+        set_lines(bufnr, rendered, true)
         vim.b[bufnr].arcanist_loaded = {
-            ref = string.format('%s%d', prefix, id),
+            ref = ref,
             values = fields.raw_values(handler.fields, obj),
         }
         vim.api.nvim_exec_autocmds('BufReadPost', { buffer = bufnr })
@@ -852,7 +913,7 @@ function M.setup()
             local prefix, id = parse_uri(args.match)
             local handler = resolve_handler(prefix, args.match, 'open')
             if handler then
-                load_reference(args.buf, handler, prefix, id)
+                load_reference(args.buf, handler, prefix, id, vim.v.cmdbang == 1)
             end
         end,
     })

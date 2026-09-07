@@ -15,12 +15,20 @@ local M = {}
 --- @field identity boolean Read a file no filename rule matched as Remarkup
 --- when its last line names a Phorge object.
 
+--- @class arcanist.DraftsConfig
+--- @field enabled boolean Hand an opened object's buffer to a local file:
+--- `:w` is a plain local write, `:ArcWrite` pushes to Phorge, and the draft
+--- survives across sessions.
+--- @field dir string Directory the draft files live in.
+
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
 --- @field completion arcanist.CompletionConfig
 --- @field detect arcanist.DetectConfig
+--- @field drafts arcanist.DraftsConfig
 --- @field conduit_timeout integer Milliseconds to wait on a blocking
---- Conduit call (i.e. `:w` on an "arcanist://" buffer) before giving up.
+--- Conduit call (i.e. `:w` on an "arcanist://" buffer, or `:ArcWrite`) before
+--- giving up.
 
 --- @type arcanist.Config
 local default_config = {
@@ -35,6 +43,10 @@ local default_config = {
     detect = {
         identity = true,
     },
+    drafts = {
+        enabled = false,
+        dir = vim.fn.stdpath('data') .. '/arcanist',
+    },
     conduit_timeout = 10000,
 }
 
@@ -45,6 +57,9 @@ M.config = default_config
 --- @param opts arcanist.Config?
 function M.setup(opts)
     M.config = vim.tbl_deep_extend('force', default_config, opts or {})
+    if M.config.drafts.enabled then
+        require('arcanist.draft').register_filetype()
+    end
 end
 
 --- Pick a Phorge task or revision and open it as an "arcanist://" buffer;

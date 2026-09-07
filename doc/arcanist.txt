@@ -12,8 +12,7 @@ CONTENTS                                                   *arcanist-contents*
   7. Commands .................................... |arcanist-commands|
   8. Configuration ............................... |arcanist-config|
   9. Lua API ..................................... |arcanist-api|
- 10. Recipes ..................................... |arcanist-recipes|
- 11. Troubleshooting ............................. |arcanist-troubleshooting|
+ 10. Troubleshooting ............................. |arcanist-troubleshooting|
 
 ==============================================================================
 1. INTRODUCTION                                                     *arcanist*
@@ -132,6 +131,9 @@ does not stop it. Your buffer is left modified and you have three ways out: >
     :e!                discard yours and reload theirs
     :w!                overwrite theirs with yours
 <
+With drafts enabled, `:w` saves to a local file instead of pushing, and
+|:ArcWrite| is what publishes. See |arcanist-drafts|.
+
 READING INTO ANOTHER BUFFER
 
 `:read` pulls an object's document into the buffer you are already editing,
@@ -148,6 +150,36 @@ REFRESHING
 An "arcanist://" buffer stays loaded when you navigate away, so your cursor
 and scroll position survive. The flip side is that returning to it shows what
 was last fetched, not necessarily what the server has now. `:e!` refetches.
+With drafts enabled, `:e!` also overwrites the draft with the server's
+version; see |arcanist-drafts|.
+
+DRAFTS                                                       *arcanist-drafts*
+
+By default `:w` pushes straight to Phorge. With drafts enabled -- >lua
+
+    require('arcanist').setup({ drafts = { enabled = true } })
+<
+opening an object writes it to a plain file under `drafts.dir` (see
+|arcanist-config-drafts.dir|), named for the object ("T123", no extension),
+and hands the buffer to that file. From then on it is an ordinary file:
+
+    :w                    a normal local write. Nothing is sent.
+    :ArcWrite             pushes to Phorge (see |:ArcWrite|). The identity
+                          line on the last line names the object.
+    :e arcanist://T123    reopens the draft straight from disk, no network --
+                          so unpushed edits survive closing Neovim.
+    :e! arcanist://T123   refetches from the server and overwrites the draft.
+
+The picker, |gd| and `:ArcList` still open `arcanist://T123`; that name just
+redirects to the draft once one exists. Every file under `drafts.dir` opens
+as Remarkup. Drafts are one file per object and are never deleted for you --
+the directory is yours to prune.
+
+`:ArcWrite` on a draft has no staleness guard: it sends every field in the
+document, so a field the server changed while your draft sat unopened is
+overwritten with the draft's value. The guard in |arcanist-write| only
+protects a live "arcanist://" buffer, which drafts replace. Reopen the draft
+before `:ArcWrite` if the object may have moved.
 
 ==============================================================================
 4. FIELDS                                                    *arcanist-fields*
@@ -460,6 +492,10 @@ works without it. These are the defaults: >lua
         detect = {
             identity = true,
         },
+        drafts = {
+            enabled = false,
+            dir = vim.fn.stdpath('data') .. '/arcanist',
+        },
         conduit_timeout = 10000,
     })
 <
@@ -490,10 +526,22 @@ detect.identity ~
     last line names a Phorge object. Set to false to leave such files alone.
     See |arcanist-remarkup|.
 
+                                             *arcanist-config-drafts.enabled*
+drafts.enabled ~
+    Whether opening an object hands the buffer to a local file, so `:w` is a
+    plain local write and |:ArcWrite| is what publishes. Off by default; see
+    |arcanist-drafts|.
+
+                                                 *arcanist-config-drafts.dir*
+drafts.dir ~
+    Directory the draft files live in. Defaults to a subdirectory of
+    |stdpath()| "data".
+
                                              *arcanist-config-conduit_timeout*
 conduit_timeout ~
     Milliseconds to wait on a request that blocks the editor -- writing an
-    "arcanist://" buffer -- before giving up. Raise it on a slow instance.
+    "arcanist://" buffer, or |:ArcWrite| -- before giving up. Raise it on a
+    slow instance.
 
 ==============================================================================
 9. LUA API                                                      *arcanist-api*
@@ -535,31 +583,7 @@ require('arcanist').list({opts})
         end, { desc = 'My open arc tasks' })
 <
 ==============================================================================
-10. RECIPES                                                *arcanist-recipes*
-
-Things the plugin deliberately leaves to your configuration, because there is
-more than one reasonable answer.
-
-LOCAL FILE, EXPLICIT PUSH                             *arcanist-recipe-local*
-
-`:w` on an "arcanist://" buffer blocks the editor on a Conduit round-trip.
-Rename the buffer to a temporary file once it has loaded and `:w` becomes an
-ordinary local write, leaving |:ArcWrite| -- which pushes by the identity
-line, see |arcanist-identity| -- as the only thing that talks to Phorge. >lua
-
-    vim.api.nvim_create_autocmd('BufReadPost', {
-        pattern = 'arcanist://*',
-        nested = true,
-        callback = function(args)
-            local dir = vim.fn.tempname()
-            vim.fn.mkdir(dir, 'p')
-            local name = args.file:match('^arcanist://(.*)$') .. '.remarkup'
-            vim.api.nvim_buf_set_name(args.buf, vim.fs.joinpath(dir, name))
-        end,
-    })
-<
-==============================================================================
-11. TROUBLESHOOTING                                 *arcanist-troubleshooting*
+10. TROUBLESHOOTING                                 *arcanist-troubleshooting*
 
 Every message the plugin prints is prefixed "arcanist.nvim:".
 
