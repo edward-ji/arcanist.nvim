@@ -849,21 +849,23 @@ local function push_command(cmd_args)
     push(bufnr, handler, prefix, id, lines, cmd_args.bang)
 end
 
---- Return the "arcanist://<ref>" URI for the object reference at the
---- (0-indexed, byte-offset) `row`/`col` in `bufnr` -- bare ("T123") or
---- braced ("{T123}") -- or nil if there isn't one there, or it's a type we
---- don't support opening yet.
+--- The object monogram at the (0-indexed, byte-offset) `row`/`col` in
+--- `bufnr` -- "T123" for a bare reference, "D4" for "{D4}" -- for any
+--- reference the remarkup grammar recognises, or nil if there isn't one
+--- there. Whether the plugin can *open* that monogram is the caller's to
+--- decide; `M.at` layers the HANDLERS gate and the "arcanist://" prefix on
+--- top.
 --- @param bufnr integer
 --- @param row integer
 --- @param col integer
---- @return string? uri
-function M.at(bufnr, row, col)
+--- @return string? monogram
+function M.monogram_at(bufnr, row, col)
     local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'remarkup')
     if not ok then
         return nil
     end
-    -- get_node() needs an up-to-date tree; the LSP request that calls this
-    -- may land before any redraw has triggered a parse.
+    -- get_node() needs an up-to-date tree; a caller may reach this before
+    -- any redraw has triggered a parse.
     parser:parse()
 
     local node = vim.treesitter.get_node({ bufnr = bufnr, pos = { row, col } })
@@ -881,9 +883,33 @@ function M.at(bufnr, row, col)
     end
 
     -- Drop the leading "{" of a braced reference and a trailing "#123"
-    -- comment anchor (as in "T123#456") -- opens the object itself; jumping
+    -- comment anchor (as in "T123#456") -- names the object itself; jumping
     -- straight to the anchored comment is future work.
-    local text = vim.treesitter.get_node_text(node, bufnr):match('^{?([^#]+)')
+    return vim.treesitter.get_node_text(node, bufnr):match('^{?([^#]+)')
+end
+
+--- `monogram_at` for the cursor in window `win` (default: current).
+--- @param win integer?
+--- @return string? monogram
+function M.monogram_at_cursor(win)
+    win = win or 0
+    local pos = vim.api.nvim_win_get_cursor(win)
+    return M.monogram_at(vim.api.nvim_win_get_buf(win), pos[1] - 1, pos[2])
+end
+
+--- Return the "arcanist://<ref>" URI for the object reference at the
+--- (0-indexed, byte-offset) `row`/`col` in `bufnr` -- bare ("T123") or
+--- braced ("{T123}") -- or nil if there isn't one there, or it's a type we
+--- don't support opening yet.
+--- @param bufnr integer
+--- @param row integer
+--- @param col integer
+--- @return string? uri
+function M.at(bufnr, row, col)
+    local text = M.monogram_at(bufnr, row, col)
+    if not text then
+        return nil
+    end
     local prefix, id = parse_ref(text)
     if not (prefix and HANDLERS[prefix]) then
         return nil

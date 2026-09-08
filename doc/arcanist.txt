@@ -29,6 +29,8 @@ files `arc` opens in your editor. See |arcanist-remarkup|.
 
 "arcanist://" buffers are Phorge objects themselves. `:e arcanist://T123`
 fetches the task; `:w` writes your edits back. See |arcanist-buffers|.
+|:ArcFile|, or |gf| on a file monogram, downloads a file object and opens it
+in a viewer.
 
 Two things have to be in place for any of it to work. `arc` must be on your
 $PATH and configured against your instance (see ~/.arcrc) -- every request
@@ -474,6 +476,36 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
                         "ignore the conflict guard" -- but deleting the line
                         does.
 
+------------------------------------------------------------------------------
+                                                                    *:ArcFile*
+:ArcFile[!] [monogram]  Download a Phorge file object and open it with the
+                        system handler. [monogram] is a file monogram like
+                        "F123"; without it, the target is the monogram under
+                        the cursor.
+
+                        The file is cached under |stdpath()| "cache", keyed by
+                        monogram, and served straight from there next time --
+                        a Phorge file's contents never change once uploaded.
+                        "!" re-downloads a cached file and lifts the
+                        |arcanist-config-preview.max_bytes| limit.
+
+                        The viewer is the OS default for the file's type
+                        (|vim.ui.open|), so an image, a video and a PDF each
+                        open in their usual application. To render inside
+                        Neovim instead, set |arcanist-config-preview.open|.
+
+                        In a Remarkup buffer, |gf| on a file monogram does
+                        this too; on any other monogram or word `gf` is
+                        unchanged.
+
+                        To bind another key, call the Lua API: >lua
+
+                            vim.keymap.set('n', 'gpf', function()
+                                local m = require('arcanist.reference')
+                                    .monogram_at_cursor()
+                                if m then require('arcanist').preview(m) end
+                            end, { desc = 'Preview arc file' })
+<
 ==============================================================================
 8. CONFIGURATION                                             *arcanist-config*
 
@@ -495,6 +527,10 @@ works without it. These are the defaults: >lua
         drafts = {
             enabled = false,
             dir = vim.fn.stdpath('data') .. '/arcanist',
+        },
+        preview = {
+            open = nil,
+            max_bytes = 25 * 1024 * 1024,
         },
         conduit_timeout = 10000,
     })
@@ -536,6 +572,29 @@ drafts.enabled ~
 drafts.dir ~
     Directory the draft files live in. Defaults to a subdirectory of
     |stdpath()| "data".
+
+                                                *arcanist-config-preview.open*
+preview.open ~
+    What opens a downloaded file, in place of |vim.ui.open|. Either the
+    string "snacks" -- a bundled preset that renders through snacks.image
+    (images, a video frame, a PDF page) and leaves the rest to the system
+    handler -- or a function `fun(path, info)` where `path` is the local
+    cache copy and `info` is `{ monogram, name, bytes }`. Default nil
+    (|vim.ui.open|). >lua
+
+        preview = { open = 'snacks' }
+        -- or, for image.nvim or another renderer:
+        preview = {
+            open = function(path, info)
+                require('image').from_file(path):render()
+            end,
+        }
+<
+
+                                           *arcanist-config-preview.max_bytes*
+preview.max_bytes ~
+    |:ArcFile| refuses a file larger than this unless it is called with "!".
+    Default 25 MiB.
 
                                              *arcanist-config-conduit_timeout*
 conduit_timeout ~
@@ -582,6 +641,17 @@ require('arcanist').list({opts})
             })
         end, { desc = 'My open arc tasks' })
 <
+                                                          *arcanist.preview()*
+require('arcanist').preview({monogram}, {opts})
+
+    The implementation behind |:ArcFile|. {monogram} is a file monogram
+    ("F123"). {opts.force} re-downloads past the cache and the size cap.
+
+    For a custom binding, `require('arcanist.file').fetch(monogram, opts, cb)`
+    downloads without opening a viewer (`cb` gets `(path, info)`, or
+    `(nil, nil, err)`), and `require('arcanist.reference').monogram_at_cursor()`
+    is the monogram under the cursor.
+
 ==============================================================================
 10. TROUBLESHOOTING                                 *arcanist-troubleshooting*
 

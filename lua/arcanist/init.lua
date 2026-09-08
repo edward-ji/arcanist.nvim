@@ -21,11 +21,25 @@ local M = {}
 --- survives across sessions.
 --- @field dir string Directory the draft files live in.
 
+--- @class arcanist.PreviewInfo
+--- @field monogram string The file's monogram, e.g. "F123".
+--- @field name string Filename as stored on Phorge.
+--- @field bytes integer? Byte size from `file.search` (nil on a cache hit).
+
+--- @class arcanist.PreviewConfig
+--- @field open (fun(path: string, info: arcanist.PreviewInfo))|"snacks"|nil
+--- Called in place of `vim.ui.open` when `:ArcFile` displays a downloaded
+--- file. A function routes it through your own viewer; "snacks" is a bundled
+--- preset that renders through snacks.image. Default nil (`vim.ui.open`).
+--- @field max_bytes integer Refuse to download a file larger than this
+--- unless ":ArcFile!" is used.
+
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
 --- @field completion arcanist.CompletionConfig
 --- @field detect arcanist.DetectConfig
 --- @field drafts arcanist.DraftsConfig
+--- @field preview arcanist.PreviewConfig
 --- @field conduit_timeout integer Milliseconds to wait on a blocking
 --- Conduit call (i.e. `:w` on an "arcanist://" buffer, or `:ArcWrite`) before
 --- giving up.
@@ -46,6 +60,10 @@ local default_config = {
     drafts = {
         enabled = false,
         dir = vim.fn.stdpath('data') .. '/arcanist',
+    },
+    preview = {
+        open = nil,
+        max_bytes = 25 * 1024 * 1024,
     },
     conduit_timeout = 10000,
 }
@@ -69,6 +87,15 @@ end
 --- @param opts arcanist.ListOpts?
 function M.list(opts)
     require('arcanist.list').list(opts)
+end
+
+--- Download a Phorge file object ("F123", or the monogram under the cursor
+--- via `:ArcFile`) and open it; see arcanist.file. Re-exported and required
+--- lazily, like `list`.
+--- @param monogram string
+--- @param opts? { force: boolean }
+function M.preview(monogram, opts)
+    require('arcanist.file').preview(monogram, opts)
 end
 
 return M

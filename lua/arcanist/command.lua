@@ -1,5 +1,5 @@
--- The ":ArcLint" and ":ArcList" user commands. CamelCase matches the
--- ":ArcWrite" already registered by reference.lua (and
+-- The ":ArcLint", ":ArcList" and ":ArcFile" user commands. CamelCase matches
+-- the ":ArcWrite" already registered by reference.lua (and
 -- ":Inspect"/":InspectTree" in Neovim's own runtime).
 
 local M = {}
@@ -365,6 +365,27 @@ function M.setup()
             .. 'type to revisions. Narrow further with "owner=" and "author=", '
             .. 'each a comma-separated list of usernames in which "me" stands for '
             .. 'you -- ":ArcList open tasks owner=me".',
+    })
+
+    vim.api.nvim_create_user_command('ArcFile', function(args)
+        local monogram = vim.trim(args.args)
+        if monogram == '' then
+            monogram = require('arcanist.reference').monogram_at_cursor()
+            if not monogram then
+                require('arcanist.notify').err(
+                    'ArcFile: no monogram under the cursor (pass one, e.g. :ArcFile F123)'
+                )
+                return
+            end
+        end
+
+        require('arcanist').preview(monogram, { force = args.bang })
+    end, {
+        nargs = '?',
+        bang = true,
+        desc = 'Download a Phorge file object (F123, or the monogram under the cursor) '
+            .. 'into a local cache and open it with the system handler. With "!", '
+            .. 're-download even if cached and ignore the size limit.',
     })
 end
 
