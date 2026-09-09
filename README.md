@@ -68,6 +68,8 @@ Once installed, run inside Neovim:
 :help arcanist
 ```
 
+`:checkhealth arcanist` verifies the setup: `arc`, the parser, and the rest.
+
 ## Rebuilding the grammar
 
 If you edit `tree-sitter-remarkup/grammar.js`, regenerate the parser source

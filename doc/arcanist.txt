@@ -37,8 +37,9 @@ Two things have to be in place for any of it to work. `arc` must be on your
 $PATH and configured against your instance (see ~/.arcrc) -- every request
 goes through it. And the Remarkup parser must be built, which is what `make`
 in the plugin directory does; a plugin manager's build step normally handles
-that. See the README for both. If something is missing, the message you get
-is listed under |arcanist-troubleshooting|.
+that. See the README for both. `:checkhealth arcanist` reports on both at once
+(see |arcanist-checkhealth|); if something is missing, the message you get is
+listed under |arcanist-troubleshooting|.
 
 ==============================================================================
 2. REMARKUP                                                *arcanist-remarkup*
@@ -723,6 +724,13 @@ require('arcanist.inline')
 
 ==============================================================================
 10. TROUBLESHOOTING                                 *arcanist-troubleshooting*
+                                                       *arcanist-checkhealth*
+
+Run `:checkhealth arcanist` for a one-shot check of the setup: Neovim's
+version, whether `arc` is on $PATH and can reach your instance (a live
+`user.whoami` call, so run it from inside a working copy), whether the
+Remarkup parser is built, and the state of the optional integrations. Each
+failure carries the same advice as the message list below.
 
 Every message the plugin prints is prefixed "arcanist.nvim:".
 
