@@ -73,18 +73,29 @@ end
 
 --- Fetch F<id> into the cache and call `cb` with the local path. No viewer --
 --- `preview()` adds that; a caller that only wants the file uses this
---- directly. `cb` runs on the main loop, `(nil, nil, err)` on failure (the
---- user is already notified); a fetch for a file already downloading is a
---- silent no-op.
+--- directly. `cb` runs on the main loop, `(nil, nil, err)` on failure; a
+--- fetch for a file already downloading is a silent no-op.
 --- @param monogram string  "F123" (also accepts "{F123}").
---- @param opts? { force: boolean }  force: re-download past the cache and
----   ignore `config.preview.max_bytes` (the ":ArcFile!" bang).
+--- @param opts? { force: boolean, quiet: boolean }  force: re-download past
+---   the cache and ignore `config.preview.max_bytes` (the ":ArcFile!" bang).
+---   quiet: no progress or error messages -- for inline preview, where an
+---   oversized or missing file just does not draw. `cb` still gets the
+---   error string.
 --- @param cb fun(path: string?, info: arcanist.PreviewInfo?, err: string?)
 function M.fetch(monogram, opts, cb)
     opts = opts or {}
 
+    -- `quiet` (inline preview) silences every message; the caller still gets
+    -- the error string through `cb`.
+    local function progress(msg)
+        if not opts.quiet then
+            notify.info(msg)
+        end
+    end
     local function fail(msg)
-        notify.err(msg)
+        if not opts.quiet then
+            notify.err(msg)
+        end
         return cb(nil, nil, msg)
     end
 
@@ -93,7 +104,7 @@ function M.fetch(monogram, opts, cb)
         return fail(string.format('%q is not a file monogram', tostring(monogram)))
     end
     if in_flight[id] then
-        notify.info(string.format('F%d is already loading', id))
+        progress(string.format('F%d is already loading', id))
         return
     end
     if not opts.force then
@@ -141,7 +152,7 @@ function M.fetch(monogram, opts, cb)
             pcall(os.remove, dest)
         end
 
-        notify.info(string.format('loading F%d (%s, %s)...', id, name, bytes and human(bytes) or '?'))
+        progress(string.format('loading F%d (%s, %s)...', id, name, bytes and human(bytes) or '?'))
 
         in_flight[id] = true
         vim.system(

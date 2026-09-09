@@ -26,6 +26,15 @@ local M = {}
 --- @field name string Filename as stored on Phorge.
 --- @field bytes integer? Byte size from `file.search` (nil on a cache hit).
 
+--- @class arcanist.InlineSpec
+--- @field buf integer Target buffer.
+--- @field range integer[] { start_row, start_col, end_row, end_col }, 0-indexed, of the monogram node.
+--- @field path string Local cache path of the downloaded file.
+--- @field info arcanist.PreviewInfo
+
+--- @class arcanist.InlineHandle
+--- @field close fun() Tear this placement down.
+
 --- @class arcanist.PreviewConfig
 --- @field open (fun(path: string, info: arcanist.PreviewInfo))|"snacks"|nil
 --- Called in place of `vim.ui.open` when `:ArcFile` displays a downloaded
@@ -33,6 +42,13 @@ local M = {}
 --- preset that renders through snacks.image. Default nil (`vim.ui.open`).
 --- @field max_bytes integer Refuse to download a file larger than this
 --- unless ":ArcFile!" is used.
+--- @field inline (fun(spec: arcanist.InlineSpec): arcanist.InlineHandle?)|"snacks"|nil
+--- The inline-preview state each Remarkup buffer opens with, and how file
+--- monograms render below their reference. nil (default): off -- but
+--- `require('arcanist.inline').enable()` can still turn a buffer on,
+--- rendering through snacks.image. "snacks": on, via snacks.image (which
+--- decides what it can draw). A function: on, called once per referenced
+--- file after it downloads; return nil to leave that monogram as text.
 
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
@@ -64,6 +80,7 @@ local default_config = {
     preview = {
         open = nil,
         max_bytes = 25 * 1024 * 1024,
+        inline = nil,
     },
     conduit_timeout = 10000,
 }

@@ -30,7 +30,8 @@ files `arc` opens in your editor. See |arcanist-remarkup|.
 "arcanist://" buffers are Phorge objects themselves. `:e arcanist://T123`
 fetches the task; `:w` writes your edits back. See |arcanist-buffers|.
 |:ArcFile|, or |gf| on a file monogram, downloads a file object and opens it
-in a viewer.
+in a viewer; with |arcanist-config-preview.inline| set, image monograms draw
+inline in the buffer.
 
 Two things have to be in place for any of it to work. `arc` must be on your
 $PATH and configured against your instance (see ~/.arcrc) -- every request
@@ -104,6 +105,22 @@ lines and statuslines, if you have nvim-web-devicons or mini.icons installed.
 Neither is required. The glyph is a Nerd Font one, so it is skipped when you
 have said you have none -- `vim.g.have_nerd_font` set to false, or mini.icons
 run with `style = 'ascii'`.
+
+INLINE PREVIEW                                        *arcanist-inline-preview*
+
+A file monogram ("{F123}", "F123") can draw its contents on the line below
+its reference, in any Remarkup buffer. It is a per-buffer mode, like 'spell':
+|arcanist-config-preview.inline| is the state a buffer opens with, and the
+|arcanist.inline| Lua API turns one buffer on or off at runtime.
+
+It is off by default. Turning it on downloads every file the buffer
+references -- quietly, and still bounded by
+|arcanist-config-preview.max_bytes|, so an oversized or missing file simply
+does not draw. What renders is up to snacks.image (or your own renderer):
+images, and a video or PDF as a single still frame; anything it cannot draw
+stays as text. A buffer refreshes on reload, and on write if a monogram was
+added or removed. Rendering needs snacks.image (or your own renderer) plus a
+graphics-capable terminal; see |arcanist-config-preview.inline|.
 
 ==============================================================================
 3. ARCANIST:// BUFFERS                                      *arcanist-buffers*
@@ -531,6 +548,7 @@ works without it. These are the defaults: >lua
         preview = {
             open = nil,
             max_bytes = 25 * 1024 * 1024,
+            inline = nil,
         },
         conduit_timeout = 10000,
     })
@@ -596,6 +614,35 @@ preview.max_bytes ~
     |:ArcFile| refuses a file larger than this unless it is called with "!".
     Default 25 MiB.
 
+                                              *arcanist-config-preview.inline*
+preview.inline ~
+    The inline-preview state each Remarkup buffer opens with (see
+    |arcanist-inline-preview|), and how image monograms render. One of:
+
+        nil       Off. The |arcanist.inline| API can still switch a buffer
+                  on; it then renders through snacks.image. (Default.)
+        "snacks"  On. Renders through snacks.image, which decides per file
+                  what it can draw (images, a video or PDF still frame);
+                  anything else stays text.
+        function  On. `function(spec)` is called once per referenced file,
+                  after it downloads, with
+
+                      spec.buf     the buffer
+                      spec.range   { start_row, start_col, end_row, end_col },
+                                   0-indexed, of the monogram
+                      spec.path    the local cache path
+                      spec.info    { monogram, name, bytes }
+
+                  Return `{ close = function() ... end }` to have the
+                  placement torn down on reload or buffer wipe, or nil to
+                  leave that monogram as text (a file type you do not
+                  handle, say).
+
+    Turning it on downloads every file the buffer references -- quietly, and
+    still bounded by |arcanist-config-preview.max_bytes|, so an oversized or
+    missing file just does not draw. "snacks" warns once if snacks.nvim is
+    not installed; a file it cannot render is left as text with no message.
+
                                              *arcanist-config-conduit_timeout*
 conduit_timeout ~
     Milliseconds to wait on a request that blocks the editor -- writing an
@@ -651,6 +698,28 @@ require('arcanist').preview({monogram}, {opts})
     downloads without opening a viewer (`cb` gets `(path, info)`, or
     `(nil, nil, err)`), and `require('arcanist.reference').monogram_at_cursor()`
     is the monogram under the cursor.
+
+                                                             *arcanist.inline*
+require('arcanist.inline')
+
+    Runtime control of inline image preview (see |arcanist-inline-preview|).
+    Each function takes an optional {buf} (default: the current buffer):
+
+        enable({buf})       turn it on for {buf} and render
+        disable({buf})      turn it off and remove {buf}'s images
+        toggle({buf})       flip it; returns the new boolean
+        is_enabled({buf})   the current state
+
+    For example, a buffer-local toggle mapping: >lua
+
+        vim.keymap.set('n', '<leader>ti', function()
+            require('arcanist.inline').toggle()
+        end, { desc = 'Toggle arc inline image preview' })
+<
+    To drive a renderer of your own, set |arcanist-config-preview.inline| to
+    a function; `require('arcanist.reference').monograms_in(buf)` (every
+    object monogram in a buffer, with ranges) is the same walk the driver
+    uses.
 
 ==============================================================================
 10. TROUBLESHOOTING                                 *arcanist-troubleshooting*

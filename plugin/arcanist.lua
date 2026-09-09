@@ -14,6 +14,10 @@ vim.g.loaded_arcanist = true
 
 require('arcanist.reference').setup()
 
+-- Inline image preview's autocmds -- same startup-vs-after/ftplugin reason as
+-- above. Inert until a buffer opts in via "preview.inline" or the inline API.
+require('arcanist.inline').setup()
+
 -- Register ":ArcLint" at startup too. It has nothing to do with remarkup
 -- buffers, so registering it from after/ftplugin would leave it undefined
 -- in exactly the session you'd want it: a normal source file in a working

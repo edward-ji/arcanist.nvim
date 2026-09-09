@@ -849,6 +849,17 @@ local function push_command(cmd_args)
     push(bufnr, handler, prefix, id, lines, cmd_args.bang)
 end
 
+--- The bare monogram in an `object_reference` node's text: drop the leading
+--- "{" of a braced reference and a trailing "#123" comment anchor (as in
+--- "T123#456") -- the object itself; jumping to an anchored comment is
+--- future work.
+--- @param node TSNode
+--- @param bufnr integer
+--- @return string?
+local function bare_monogram(node, bufnr)
+    return vim.treesitter.get_node_text(node, bufnr):match('^{?([^#]+)')
+end
+
 --- The object monogram at the (0-indexed, byte-offset) `row`/`col` in
 --- `bufnr` -- "T123" for a bare reference, "D4" for "{D4}" -- for any
 --- reference the remarkup grammar recognises, or nil if there isn't one
@@ -882,10 +893,46 @@ function M.monogram_at(bufnr, row, col)
         return nil
     end
 
-    -- Drop the leading "{" of a braced reference and a trailing "#123"
-    -- comment anchor (as in "T123#456") -- names the object itself; jumping
-    -- straight to the anchored comment is future work.
-    return vim.treesitter.get_node_text(node, bufnr):match('^{?([^#]+)')
+    return bare_monogram(node, bufnr)
+end
+
+--- Lazily compiled: `query.parse` needs the `remarkup` parser registered first.
+--- @type vim.treesitter.Query?
+local refs_query
+
+--- Every object monogram in `bufnr`, in document order, each with the
+--- 0-indexed byte range { start_row, start_col, end_row, end_col } of its
+--- node -- for a caller acting on all of them at once (inline preview). Same
+--- recognition as `monogram_at`; a braced "{F1}" is included via its inner
+--- `object_reference` node.
+--- @param bufnr integer
+--- @return { monogram: string, range: integer[] }[]
+function M.monograms_in(bufnr)
+    local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'remarkup')
+    if not ok then
+        return {}
+    end
+    if not refs_query then
+        local parsed_ok, query = pcall(vim.treesitter.query.parse, 'remarkup', '(object_reference) @ref')
+        if not parsed_ok then
+            return {}
+        end
+        refs_query = query
+    end
+
+    local tree = parser:parse()[1]
+    if not tree then
+        return {}
+    end
+
+    local out = {}
+    for _, node in refs_query:iter_captures(tree:root(), bufnr) do
+        local monogram = bare_monogram(node, bufnr)
+        if monogram then
+            out[#out + 1] = { monogram = monogram, range = { node:range() } }
+        end
+    end
+    return out
 end
 
 --- `monogram_at` for the cursor in window `win` (default: current).
