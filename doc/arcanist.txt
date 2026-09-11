@@ -123,6 +123,11 @@ stays as text. A buffer refreshes on reload, and on write if a monogram was
 added or removed. Rendering needs snacks.image (or your own renderer) plus a
 graphics-capable terminal; see |arcanist-config-preview.inline|.
 
+A braced embed's own options control its size, the same as on Phorge's web
+UI: "{F123, size=full}", "{F123, width=200}". See |arcanist-config-preview.inline|
+for the recognized options and |arcanist-config-preview.thumb_width| for the
+default an embed with none of them gets.
+
 ==============================================================================
 3. ARCANIST:// BUFFERS                                      *arcanist-buffers*
                                                                  *arcanist://*
@@ -550,6 +555,8 @@ works without it. These are the defaults: >lua
             open = nil,
             max_bytes = 25 * 1024 * 1024,
             inline = nil,
+            thumb_width = 220,
+            thumb_height = nil,
         },
         conduit_timeout = 10000,
     })
@@ -633,6 +640,11 @@ preview.inline ~
                                    0-indexed, of the monogram
                       spec.path    the local cache path
                       spec.info    { monogram, name, bytes }
+                      spec.options a braced embed's parsed
+                                   "{F123, key=value, ...}" options (lowercased
+                                   keys; a bare "key" reads as true). Empty
+                                   for a bare "F123" or a braced embed with
+                                   none.
 
                   Return `{ close = function() ... end }` to have the
                   placement torn down on reload or buffer wipe, or nil to
@@ -643,6 +655,27 @@ preview.inline ~
     still bounded by |arcanist-config-preview.max_bytes|, so an oversized or
     missing file just does not draw. "snacks" warns once if snacks.nvim is
     not installed; a file it cannot render is left as text with no message.
+
+    "snacks" sizes a placement from `spec.options`, the same as Phorge's web
+    UI: "size=full"/"size=wide" render at full resolution (bounded by the
+    window); "width="/"height=" (pixels, or a percentage of the editor size)
+    box it to that, never upscaling past the file's real size. Anything else
+    -- including "size=thumb", the default -- falls back to
+    |arcanist-config-preview.thumb_width|.
+
+                                         *arcanist-config-preview.thumb_width*
+preview.thumb_width ~
+    Pixel width the "snacks" preset boxes an inline preview into when its
+    embed has no usable "size"/"width"/"height" option (see
+    |arcanist-config-preview.inline|) -- mirrors Phorge's own default
+    file-preview thumbnail, which is 220px wide. nil: no width cap in that
+    case. Default 220.
+
+                                        *arcanist-config-preview.thumb_height*
+preview.thumb_height ~
+    The same, for height. Default nil -- uncapped, so the aspect ratio
+    follows from the width cap (and the window, which is always the outer
+    bound regardless of these two).
 
                                              *arcanist-config-conduit_timeout*
 conduit_timeout ~

@@ -860,6 +860,29 @@ local function bare_monogram(node, bufnr)
     return vim.treesitter.get_node_text(node, bufnr):match('^{?([^#]+)')
 end
 
+--- Parse a "{F123, size=full, width=200}" embed's option text (everything
+--- after the monogram, e.g. ", size=full") into a dict, the same rules
+--- Phorge's own PhutilSimpleOptions uses: comma-separated "key=value" or a
+--- bare "key" (-> true), keys folded to lowercase. No quoting support --
+--- none of the keys this plugin acts on (size/width/height) ever need it.
+--- @param text string
+--- @return table<string, string|boolean>
+local function parse_embed_options(text)
+    local out = {}
+    for _, segment in ipairs(vim.split(text, ',', { plain = true, trimempty = true })) do
+        segment = vim.trim(segment)
+        if segment ~= '' then
+            local key, value = segment:match('^([^=]+)=(.*)$')
+            if key then
+                out[vim.trim(key):lower()] = vim.trim(value)
+            else
+                out[segment:lower()] = true
+            end
+        end
+    end
+    return out
+end
+
 --- The object monogram at the (0-indexed, byte-offset) `row`/`col` in
 --- `bufnr` -- "T123" for a bare reference, "D4" for "{D4}" -- for any
 --- reference the remarkup grammar recognises, or nil if there isn't one
@@ -904,9 +927,11 @@ local refs_query
 --- 0-indexed byte range { start_row, start_col, end_row, end_col } of its
 --- node -- for a caller acting on all of them at once (inline preview). Same
 --- recognition as `monogram_at`; a braced "{F1}" is included via its inner
---- `object_reference` node.
+--- `object_reference` node. `options` is that embed's parsed "{F1, key=value,
+--- ...}" option list (see parse_embed_options) -- empty for a bare "F1" or a
+--- braced embed with none, since only the embed syntax carries options.
 --- @param bufnr integer
---- @return { monogram: string, range: integer[] }[]
+--- @return { monogram: string, range: integer[], options: table<string, string|boolean> }[]
 function M.monograms_in(bufnr)
     local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'remarkup')
     if not ok then
@@ -929,7 +954,15 @@ function M.monograms_in(bufnr)
     for _, node in refs_query:iter_captures(tree:root(), bufnr) do
         local monogram = bare_monogram(node, bufnr)
         if monogram then
-            out[#out + 1] = { monogram = monogram, range = { node:range() } }
+            local options = {}
+            local parent = node:parent()
+            if parent and parent:type() == 'object_embed' then
+                local opts_node = parent:field('options')[1]
+                if opts_node then
+                    options = parse_embed_options(vim.treesitter.get_node_text(opts_node, bufnr))
+                end
+            end
+            out[#out + 1] = { monogram = monogram, range = { node:range() }, options = options }
         end
     end
     return out

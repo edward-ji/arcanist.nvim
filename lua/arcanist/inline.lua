@@ -7,6 +7,13 @@
 -- draw. `config.preview.inline` may instead be a function driving any
 -- renderer; it returns a handle with a `close`, or nil to leave the monogram
 -- as text. Downloads are quiet and bounded by `preview.max_bytes`.
+--
+-- An embed's "{F123, size=full, width=200}" options (see arcanist.reference's
+-- monograms_in) reach a renderer as `spec.options`. The "snacks" preset maps
+-- `size`/`width`/`height` onto a placement size the same way Phorge's own web
+-- rendering does; anything else with no usable size option gets boxed to
+-- `preview.thumb_width`/`thumb_height`, mirroring Phorge's own default file
+-- preview thumbnail.
 
 local notify = require('arcanist.notify')
 
@@ -59,6 +66,102 @@ local function warn_once(level, msg)
     end
 end
 
+--- A "width"/"height" embed option ("200" or "50%"), parsed.
+--- @class arcanist.Dimension
+--- @field n number
+--- @field pct boolean whether `n` is a percentage rather than pixels.
+
+--- Parse a "width"/"height" embed option the way Phorge's own
+--- PhabricatorEmbedFileRemarkupRule::parseDimension does: an unsigned
+--- decimal, optionally followed by "%". Anything else -- including a bare
+--- flag, i.e. `options.width == true` -- is not a dimension.
+--- @param value string|boolean|nil
+--- @return arcanist.Dimension?
+local function parse_dimension(value)
+    if type(value) ~= 'string' then
+        return nil
+    end
+    local n, pct = value:match('^(%d*%.?%d+)(%%?)$')
+    if not n then
+        return nil
+    end
+    return { n = tonumber(n), pct = pct == '%' }
+end
+
+--- The terminal's px-per-cell, or nil if snacks.image isn't there to ask.
+--- @return { cell_width: number, cell_height: number }?
+local function terminal_size()
+    local ok, terminal = pcall(require, 'snacks.image.terminal')
+    return ok and terminal.size() or nil
+end
+
+--- `px` pixels, converted to terminal cells for `axis` ("w"/"h"), or nil if
+--- the terminal's cell size isn't available.
+--- @param px number
+--- @param axis "w"|"h"
+--- @return integer?
+local function px_to_cells(px, axis)
+    local size = terminal_size()
+    if not size then
+        return nil
+    end
+    local cell = axis == 'w' and size.cell_width or size.cell_height
+    return math.max(1, math.ceil(px / cell))
+end
+
+--- A parsed dimension, in terminal cells for `axis` ("w"/"h"): a pixel value
+--- converts through the terminal's own cell size; a percentage is relative
+--- to the whole editor grid (`vim.o.columns`/`vim.o.lines`), not the specific
+--- window the buffer happens to be shown in right now -- close enough, since
+--- this only ever becomes a `max_width`/`max_height` *ceiling* layered on top
+--- of snacks' own accurate, continuously live per-window clamp (see
+--- `placement.lua`'s `auto_resize`), never the placement's size outright.
+--- @param dim arcanist.Dimension
+--- @param axis "w"|"h"
+--- @return integer?
+local function dim_to_cells(dim, axis)
+    if dim.pct then
+        local base = axis == 'w' and vim.o.columns or vim.o.lines
+        return math.max(1, math.ceil(dim.n / 100 * base))
+    end
+    return px_to_cells(dim.n, axis)
+end
+
+--- The size cap (`image.placement.new`'s own `max_width`/`max_height` opts,
+--- nil meaning "no cap on that axis") `options` asks for. Mirrors
+--- PhabricatorEmbedFileRemarkupRule::getFileOptions's precedence: an explicit
+--- "size" wins outright over "width"/"height" even when both are given; with
+--- no "size", "width"/"height" are used if at least one parses; everything
+--- else -- an unrecognized "size" (Phorge itself falls back to "thumb" for
+--- one of those too), or a "width"/"height" that doesn't parse -- falls back
+--- to the configured thumb default, the same way an embed with no options at
+--- all gets Phorge's own default file-preview thumbnail rather than the full
+--- image.
+--- @param options table<string, string|boolean>
+--- @return { max_width: integer?, max_height: integer? }
+local function sizing(options)
+    if options.size ~= nil then
+        local size = type(options.size) == 'string' and options.size:lower() or nil
+        if size == 'full' or size == 'wide' then
+            return {}
+        end
+    else
+        local w, h = parse_dimension(options.width), parse_dimension(options.height)
+        if w or h then
+            return {
+                max_width = w and dim_to_cells(w, 'w') or nil,
+                max_height = h and dim_to_cells(h, 'h') or nil,
+            }
+        end
+    end
+
+    local cfg = require('arcanist').config.preview
+    return {
+        max_width = cfg.thumb_width and px_to_cells(cfg.thumb_width, 'w') or nil,
+        max_height = cfg.thumb_height and px_to_cells(cfg.thumb_height, 'h') or nil,
+    }
+end
+
 --- Bundled "snacks" renderer: `snacks.image.supports_file` decides whether the
 --- file can be drawn (unsupported -> left as text); the image anchors to the
 --- monogram and draws on the line below. Warns once if snacks.nvim is absent.
@@ -83,11 +186,15 @@ local function snacks_preset(spec)
         ec = #(vim.api.nvim_buf_get_lines(spec.buf, er, er + 1, false)[1] or '')
     end
 
+    local size = sizing(spec.options)
+
     local placement = image.placement.new(spec.buf, spec.path, {
         range = { sr + 1, sc, er + 1, ec },
         pos = { sr + 1, sc },
         inline = true,
         auto_resize = true,
+        max_width = size.max_width,
+        max_height = size.max_height,
     })
 
     -- Re-show the placement whenever this buffer gets a window again (e.g.
@@ -181,7 +288,7 @@ local function render(buf, g, skip_unchanged)
             if not cur or cur.gen ~= g or not path or not vim.api.nvim_buf_is_valid(buf) then
                 return
             end
-            local handle = place({ buf = buf, range = ref.range, path = path, info = info })
+            local handle = place({ buf = buf, range = ref.range, path = path, info = info, options = ref.options })
             if handle and cur.handles then
                 table.insert(cur.handles, handle)
             end

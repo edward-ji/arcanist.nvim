@@ -31,6 +31,10 @@ local M = {}
 --- @field range integer[] { start_row, start_col, end_row, end_col }, 0-indexed, of the monogram node.
 --- @field path string Local cache path of the downloaded file.
 --- @field info arcanist.PreviewInfo
+--- @field options table<string, string|boolean> This reference's parsed
+--- "{F123, key=value, ...}" embed options (lowercased keys; a bare "key" with
+--- no "=" reads as true). Empty for a bare "F123" reference or a braced embed
+--- with none.
 
 --- @class arcanist.InlineHandle
 --- @field close fun() Tear this placement down.
@@ -49,6 +53,13 @@ local M = {}
 --- rendering through snacks.image. "snacks": on, via snacks.image (which
 --- decides what it can draw). A function: on, called once per referenced
 --- file after it downloads; return nil to leave that monogram as text.
+--- @field thumb_width integer? Pixel width the "snacks" preset boxes an
+--- inline preview into when its embed has no "size"/"width"/"height" option,
+--- or an unrecognized/"thumb" "size" -- mirrors Phorge's own default file
+--- preview transform, which is 220px wide. nil: no width cap in that case.
+--- Default 220.
+--- @field thumb_height integer? The same, for height. Default nil (uncapped
+--- -- aspect ratio follows from the width cap and the window).
 
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
@@ -81,6 +92,8 @@ local default_config = {
         open = nil,
         max_bytes = 25 * 1024 * 1024,
         inline = nil,
+        thumb_width = 220,
+        thumb_height = nil,
     },
     conduit_timeout = 10000,
 }
