@@ -89,8 +89,21 @@ local function snacks_preset(spec)
         inline = true,
         auto_resize = true,
     })
+
+    -- Re-show the placement whenever this buffer gets a window again (e.g.
+    -- switching back to it after visiting another buffer).
+    local autocmd = vim.api.nvim_create_autocmd('BufWinEnter', {
+        buffer = spec.buf,
+        callback = function()
+            vim.schedule(function()
+                pcall(placement.show, placement)
+            end)
+        end,
+    })
+
     return {
         close = function()
+            pcall(vim.api.nvim_del_autocmd, autocmd)
             pcall(placement.close, placement)
         end,
     }
