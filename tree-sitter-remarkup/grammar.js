@@ -599,8 +599,8 @@ module.exports = grammar({
     // [[wiki page]]  /  [[wiki page | name]]
     wiki_link: $ => prec.dynamic(1, seq(
       '[[',
-      field('target', alias(/[^|\]\n]+/, $.link_target)),
-      optional(seq('|', field('label', alias(/[^\]\n]+/, $.link_label)))),
+      field('target', alias(/[^\s|\]][^|\]\n]*[^\s|\]]|[^\s|\]]/, $.link_target)),
+      optional(seq('|', field('label', alias(/[^\s\]][^\]\n]*[^\s\]]|[^\s\]]/, $.link_label)))),
       ']]',
     )),
 

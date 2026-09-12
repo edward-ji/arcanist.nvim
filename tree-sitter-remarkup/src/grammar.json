@@ -1942,7 +1942,7 @@
               "type": "ALIAS",
               "content": {
                 "type": "PATTERN",
-                "value": "[^|\\]\\n]+"
+                "value": "[^\\s|\\]][^|\\]\\n]*[^\\s|\\]]|[^\\s|\\]]"
               },
               "named": true,
               "value": "link_target"
@@ -1965,7 +1965,7 @@
                       "type": "ALIAS",
                       "content": {
                         "type": "PATTERN",
-                        "value": "[^\\]\\n]+"
+                        "value": "[^\\s\\]][^\\]\\n]*[^\\s\\]]|[^\\s\\]]"
                       },
                       "named": true,
                       "value": "link_label"

@@ -94,6 +94,25 @@ Wiki links
       label: (link_label))))
 
 ==================
+Wiki link padding is trimmed off target and label
+==================
+[[ https://example.com/foo | some text ]] and [[   ]] stays text
+
+---
+
+(document
+  (paragraph
+    (wiki_link
+      target: (link_target)
+      label: (link_label))
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)
+    (text)))
+
+==================
 Markdown link needs / or @ in target
 ==================
 [1](y) stays text but [a](/x/y) links

@@ -471,11 +471,6 @@
     }
   },
   {
-    "type": "link_label",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "list",
     "named": true,
     "fields": {},
@@ -1200,6 +1195,10 @@
   },
   {
     "type": "info_string",
+    "named": true
+  },
+  {
+    "type": "link_label",
     "named": true
   },
   {
