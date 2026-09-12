@@ -30,8 +30,8 @@ files `arc` opens in your editor. See |arcanist-remarkup|.
 "arcanist://" buffers are Phorge objects themselves. `:e arcanist://T123`
 fetches the task; `:w` writes your edits back. See |arcanist-buffers|.
 |:ArcFile|, or |gf| on a file monogram, downloads a file object and opens it
-in a viewer; with |arcanist-config-preview.inline| set, image monograms draw
-inline in the buffer.
+in a viewer; with |arcanist-config-file.inline.render| set, image monograms
+draw inline in the buffer.
 
 Two things have to be in place for any of it to work. `arc` must be on your
 $PATH and configured against your instance (see ~/.arcrc) -- every request
@@ -114,22 +114,23 @@ INLINE PREVIEW                                        *arcanist-inline-preview*
 
 A file monogram ("{F123}", "F123") can draw its contents on the line below
 its reference, in any Remarkup buffer. It is a per-buffer mode, like 'spell':
-|arcanist-config-preview.inline| is the state a buffer opens with, and the
+|arcanist-config-file.inline.render| is the state a buffer opens with, and the
 |arcanist.inline| Lua API turns one buffer on or off at runtime.
 
 It is off by default. Turning it on downloads every file the buffer
 references -- quietly, and still bounded by
-|arcanist-config-preview.max_bytes|, so an oversized or missing file simply
+|arcanist-config-file.max_bytes|, so an oversized or missing file simply
 does not draw. What renders is up to snacks.image (or your own renderer):
 images, and a video or PDF as a single still frame; anything it cannot draw
 stays as text. A buffer refreshes on reload, and on write if a monogram was
 added or removed. Rendering needs snacks.image (or your own renderer) plus a
-graphics-capable terminal; see |arcanist-config-preview.inline|.
+graphics-capable terminal; see |arcanist-config-file.inline.render|.
 
 A braced embed's own options control its size, the same as on Phorge's web
-UI: "{F123, size=full}", "{F123, width=200}". See |arcanist-config-preview.inline|
-for the recognized options and |arcanist-config-preview.thumb_width| for the
-default an embed with none of them gets.
+UI: "{F123, size=full}", "{F123, width=200}". See
+|arcanist-config-file.inline.render| for the recognized options and
+|arcanist-config-file.inline.thumb_width| for the default an embed with none
+of them gets.
 
 ==============================================================================
 3. ARCANIST:// BUFFERS                                      *arcanist-buffers*
@@ -513,12 +514,12 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
                         monogram, and served straight from there next time --
                         a Phorge file's contents never change once uploaded.
                         "!" re-downloads a cached file and lifts the
-                        |arcanist-config-preview.max_bytes| limit.
+                        |arcanist-config-file.max_bytes| limit.
 
                         The viewer is the OS default for the file's type
                         (|vim.ui.open|), so an image, a video and a PDF each
                         open in their usual application. To render inside
-                        Neovim instead, set |arcanist-config-preview.open|.
+                        Neovim instead, set |arcanist-config-file.open|.
 
                         In a Remarkup buffer, |gf| on a file monogram does
                         this too; on any other monogram or word `gf` is
@@ -555,12 +556,14 @@ works without it. These are the defaults: >lua
             enabled = false,
             dir = vim.fn.stdpath('data') .. '/arcanist',
         },
-        preview = {
+        file = {
             open = nil,
             max_bytes = 25 * 1024 * 1024,
-            inline = nil,
-            thumb_width = 220,
-            thumb_height = nil,
+            inline = {
+                render = nil,
+                thumb_width = 220,
+                thumb_height = nil,
+            },
         },
         conduit_timeout = 10000,
     })
@@ -610,8 +613,8 @@ drafts.dir ~
     Directory the draft files live in. Defaults to a subdirectory of
     |stdpath()| "data".
 
-                                                *arcanist-config-preview.open*
-preview.open ~
+                                                    *arcanist-config-file.open*
+file.open ~
     What opens a downloaded file, in place of |vim.ui.open|. Either the
     string "snacks" -- a bundled preset that renders through snacks.image
     (images, a video frame, a PDF page) and leaves the rest to the system
@@ -619,22 +622,22 @@ preview.open ~
     cache copy and `info` is `{ monogram, name, bytes }`. Default nil
     (|vim.ui.open|). >lua
 
-        preview = { open = 'snacks' }
+        file = { open = 'snacks' }
         -- or, for image.nvim or another renderer:
-        preview = {
+        file = {
             open = function(path, info)
                 require('image').from_file(path):render()
             end,
         }
 <
 
-                                           *arcanist-config-preview.max_bytes*
-preview.max_bytes ~
+                                               *arcanist-config-file.max_bytes*
+file.max_bytes ~
     |:ArcFile| refuses a file larger than this unless it is called with "!".
     Default 25 MiB.
 
-                                              *arcanist-config-preview.inline*
-preview.inline ~
+                                            *arcanist-config-file.inline.render*
+file.inline.render ~
     The inline-preview state each Remarkup buffer opens with (see
     |arcanist-inline-preview|), and how image monograms render. One of:
 
@@ -663,7 +666,7 @@ preview.inline ~
                   handle, say).
 
     Turning it on downloads every file the buffer references -- quietly, and
-    still bounded by |arcanist-config-preview.max_bytes|, so an oversized or
+    still bounded by |arcanist-config-file.max_bytes|, so an oversized or
     missing file just does not draw. "snacks" warns once if snacks.nvim is
     not installed; a file it cannot render is left as text with no message.
 
@@ -672,18 +675,18 @@ preview.inline ~
     window); "width="/"height=" (pixels, or a percentage of the editor size)
     box it to that, never upscaling past the file's real size. Anything else
     -- including "size=thumb", the default -- falls back to
-    |arcanist-config-preview.thumb_width|.
+    |arcanist-config-file.inline.thumb_width|.
 
-                                         *arcanist-config-preview.thumb_width*
-preview.thumb_width ~
+                                      *arcanist-config-file.inline.thumb_width*
+file.inline.thumb_width ~
     Pixel width the "snacks" preset boxes an inline preview into when its
     embed has no usable "size"/"width"/"height" option (see
-    |arcanist-config-preview.inline|) -- mirrors Phorge's own default
+    |arcanist-config-file.inline.render|) -- mirrors Phorge's own default
     file-preview thumbnail, which is 220px wide. nil: no width cap in that
     case. Default 220.
 
-                                        *arcanist-config-preview.thumb_height*
-preview.thumb_height ~
+                                     *arcanist-config-file.inline.thumb_height*
+file.inline.thumb_height ~
     The same, for height. Default nil -- uncapped, so the aspect ratio
     follows from the width cap (and the window, which is always the outer
     bound regardless of these two).
@@ -761,8 +764,8 @@ require('arcanist.inline')
             require('arcanist.inline').toggle()
         end, { desc = 'Toggle arc inline image preview' })
 <
-    To drive a renderer of your own, set |arcanist-config-preview.inline| to
-    a function; `require('arcanist.reference').monograms_in(buf)` (every
+    To drive a renderer of your own, set |arcanist-config-file.inline.render|
+    to a function; `require('arcanist.reference').monograms_in(buf)` (every
     object monogram in a buffer, with ranges) is the same walk the driver
     uses.
 

@@ -128,16 +128,15 @@ local function check_optional()
             .. 'the Remarkup filetype glyph is skipped')
     end
 
-    -- Both preview.open and preview.inline take "snacks", rendering through
+    -- Both file.open and file.inline.render take "snacks", rendering through
     -- snacks.image.
-    for _, key in ipairs({ 'open', 'inline' }) do
-        if config.preview[key] == 'snacks' then
+    local snacks_users = { open = config.file.open, ['inline.render'] = config.file.inline.render }
+    for key, value in pairs(snacks_users) do
+        if value == 'snacks' then
             if pcall(require, 'snacks.image') then
-                health.ok(('preview.%s = "snacks": snacks.image is available'):format(key))
+                health.ok(('file.%s = "snacks": snacks.image is available'):format(key))
             else
-                health.warn(
-                    ('preview.%s = "snacks" but snacks.image is not available'):format(key)
-                )
+                health.warn(('file.%s = "snacks" but snacks.image is not available'):format(key))
             end
         end
     end

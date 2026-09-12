@@ -25,7 +25,7 @@ local M = {}
 --- survives across sessions.
 --- @field dir string Directory the draft files live in.
 
---- @class arcanist.PreviewInfo
+--- @class arcanist.FileInfo
 --- @field monogram string The file's monogram, e.g. "F123".
 --- @field name string Filename as stored on Phorge.
 --- @field bytes integer? Byte size from `file.search` (nil on a cache hit).
@@ -34,7 +34,7 @@ local M = {}
 --- @field buf integer Target buffer.
 --- @field range integer[] { start_row, start_col, end_row, end_col }, 0-indexed, of the monogram node.
 --- @field path string Local cache path of the downloaded file.
---- @field info arcanist.PreviewInfo
+--- @field info arcanist.FileInfo
 --- @field options table<string, string|boolean> This reference's parsed
 --- "{F123, key=value, ...}" embed options (lowercased keys; a bare "key" with
 --- no "=" reads as true). Empty for a bare "F123" reference or a braced embed
@@ -43,14 +43,8 @@ local M = {}
 --- @class arcanist.InlineHandle
 --- @field close fun() Tear this placement down.
 
---- @class arcanist.PreviewConfig
---- @field open (fun(path: string, info: arcanist.PreviewInfo))|"snacks"|nil
---- Called in place of `vim.ui.open` when `:ArcFile` displays a downloaded
---- file. A function routes it through your own viewer; "snacks" is a bundled
---- preset that renders through snacks.image. Default nil (`vim.ui.open`).
---- @field max_bytes integer Refuse to download a file larger than this
---- unless ":ArcFile!" is used.
---- @field inline (fun(spec: arcanist.InlineSpec): arcanist.InlineHandle?)|"snacks"|nil
+--- @class arcanist.InlineConfig
+--- @field render (fun(spec: arcanist.InlineSpec): arcanist.InlineHandle?)|"snacks"|nil
 --- The inline-preview state each Remarkup buffer opens with, and how file
 --- monograms render below their reference. nil (default): off -- but
 --- `require('arcanist.inline').enable()` can still turn a buffer on,
@@ -65,12 +59,22 @@ local M = {}
 --- @field thumb_height integer? The same, for height. Default nil (uncapped
 --- -- aspect ratio follows from the width cap and the window).
 
+--- @class arcanist.FileConfig
+--- @field open (fun(path: string, info: arcanist.FileInfo))|"snacks"|nil
+--- Called in place of `vim.ui.open` when `:ArcFile` displays a downloaded
+--- file. A function routes it through your own viewer; "snacks" is a bundled
+--- preset that renders through snacks.image. Default nil (`vim.ui.open`).
+--- @field max_bytes integer Refuse to download a file larger than this
+--- unless ":ArcFile!" is used.
+--- @field inline arcanist.InlineConfig Inline-preview settings; see
+--- `arcanist.InlineConfig`'s own fields.
+
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
 --- @field completion arcanist.CompletionConfig
 --- @field detect arcanist.DetectConfig
 --- @field drafts arcanist.DraftsConfig
---- @field preview arcanist.PreviewConfig
+--- @field file arcanist.FileConfig
 --- @field conduit_timeout integer Milliseconds to wait on a blocking
 --- Conduit call (i.e. `:w` on an "arcanist://" buffer, or `:ArcWrite`) before
 --- giving up.
@@ -93,12 +97,14 @@ local default_config = {
         enabled = false,
         dir = vim.fn.stdpath('data') .. '/arcanist',
     },
-    preview = {
+    file = {
         open = nil,
         max_bytes = 25 * 1024 * 1024,
-        inline = nil,
-        thumb_width = 220,
-        thumb_height = nil,
+        inline = {
+            render = nil,
+            thumb_width = 220,
+            thumb_height = nil,
+        },
     },
     conduit_timeout = 10000,
 }

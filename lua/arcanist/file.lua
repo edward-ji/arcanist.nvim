@@ -77,11 +77,11 @@ end
 --- fetch for a file already downloading is a silent no-op.
 --- @param monogram string  "F123" (also accepts "{F123}").
 --- @param opts? { force: boolean, quiet: boolean }  force: re-download past
----   the cache and ignore `config.preview.max_bytes` (the ":ArcFile!" bang).
+---   the cache and ignore `config.file.max_bytes` (the ":ArcFile!" bang).
 ---   quiet: no progress or error messages -- for inline preview, where an
 ---   oversized or missing file just does not draw. `cb` still gets the
 ---   error string.
---- @param cb fun(path: string?, info: arcanist.PreviewInfo?, err: string?)
+--- @param cb fun(path: string?, info: arcanist.FileInfo?, err: string?)
 function M.fetch(monogram, opts, cb)
     opts = opts or {}
 
@@ -129,7 +129,7 @@ function M.fetch(monogram, opts, cb)
         end
         local bytes = file.fields.size
 
-        local cap = require('arcanist').config.preview.max_bytes
+        local cap = require('arcanist').config.file.max_bytes
         if not opts.force and bytes and cap and bytes > cap then
             return fail(
                 string.format(
@@ -180,7 +180,7 @@ end
 --- Open `path` with the OS handler. A machine with no opener -- headless, no
 --- xdg-open -- keeps the file and is told where it landed.
 --- @param path string
---- @param info arcanist.PreviewInfo
+--- @param info arcanist.FileInfo
 local function system_open(path, info)
     local proc, err = vim.ui.open(path)
     if not proc then
@@ -188,7 +188,7 @@ local function system_open(path, info)
     end
 end
 
---- Bundled `preview.open` handlers, each `fun(path, info)`, selected by name.
+--- Bundled `file.open` handlers, each `fun(path, info)`, selected by name.
 local presets = {
     --- Render whatever snacks.image can (image, video frame, PDF page) as an
     --- ":edit" buffer -- its own BufReadCmd draws it inline -- and leave the
@@ -203,15 +203,15 @@ local presets = {
     end,
 }
 
---- Hand a downloaded file to `config.preview.open` -- a `fun(path, info)` or
+--- Hand a downloaded file to `config.file.open` -- a `fun(path, info)` or
 --- the name of a bundled preset -- or to `vim.ui.open`.
 --- @param path string
---- @param info arcanist.PreviewInfo
+--- @param info arcanist.FileInfo
 local function open(path, info)
-    local hook = require('arcanist').config.preview.open
+    local hook = require('arcanist').config.file.open
     if type(hook) == 'string' then
         if not presets[hook] then
-            notify.err(string.format('preview.open: unknown preset %q', hook))
+            notify.err(string.format('file.open: unknown preset %q', hook))
             return
         end
         hook = presets[hook]
@@ -223,7 +223,7 @@ local function open(path, info)
 end
 
 --- Download a file object and open it. `opts.force` (the ":ArcFile!" bang)
---- re-downloads past the cache and ignores `config.preview.max_bytes`.
+--- re-downloads past the cache and ignores `config.file.max_bytes`.
 --- @param monogram string
 --- @param opts? { force: boolean }
 function M.preview(monogram, opts)

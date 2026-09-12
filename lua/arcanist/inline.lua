@@ -1,29 +1,29 @@
 -- Inline preview: draw a referenced file object ("{F123}", "F123") on the
 -- line below its monogram, in any Remarkup buffer. A per-buffer mode, like
--- 'spell': `config.preview.inline` is the state a buffer opens with, and the
--- enable/disable/toggle API flips one buffer at runtime.
+-- 'spell': `config.file.inline.render` is the state a buffer opens with, and
+-- the enable/disable/toggle API flips one buffer at runtime.
 --
 -- The "snacks" preset renders through snacks.image, which picks what it can
--- draw. `config.preview.inline` may instead be a function driving any
+-- draw. `config.file.inline.render` may instead be a function driving any
 -- renderer; it returns a handle with a `close`, or nil to leave the monogram
--- as text. Downloads are quiet and bounded by `preview.max_bytes`.
+-- as text. Downloads are quiet and bounded by `file.max_bytes`.
 --
 -- An embed's "{F123, size=full, width=200}" options (see arcanist.reference's
 -- monograms_in) reach a renderer as `spec.options`. The "snacks" preset maps
 -- `size`/`width`/`height` onto a placement size the same way Phorge's own web
 -- rendering does; anything else with no usable size option gets boxed to
--- `preview.thumb_width`/`thumb_height`, mirroring Phorge's own default file
--- preview thumbnail.
+-- `file.inline.thumb_width`/`thumb_height`, mirroring Phorge's own default
+-- file preview thumbnail.
 
 local notify = require('arcanist.notify')
 
 local M = {}
 
 --- Per-buffer state, keyed by bufnr. `override` is an explicit enable/disable
---- (nil = follow `config.preview.inline`); `handles` are the placements now on
---- screen; `shown` is the sorted monogram list they were built from, so a
---- `:w` that changed nothing can skip the re-render; `gen` is bumped on every
---- (re)render so a superseded `file.fetch` callback bails.
+--- (nil = follow `config.file.inline.render`); `handles` are the placements
+--- now on screen; `shown` is the sorted monogram list they were built from,
+--- so a `:w` that changed nothing can skip the re-render; `gen` is bumped on
+--- every (re)render so a superseded `file.fetch` callback bails.
 --- @type table<integer, { override: boolean?, handles: arcanist.InlineHandle[]?, shown: string[]?, gen: integer }>
 local bufs = {}
 
@@ -44,7 +44,7 @@ local function resolve_buf(buf)
 end
 
 --- Whether inline preview is on for `buf`: its explicit override, else
---- whether `config.preview.inline` is set at all.
+--- whether `config.file.inline.render` is set at all.
 --- @param buf integer
 --- @return boolean
 local function enabled(buf)
@@ -52,7 +52,7 @@ local function enabled(buf)
     if r and r.override ~= nil then
         return r.override
     end
-    return not not require('arcanist').config.preview.inline
+    return not not require('arcanist').config.file.inline.render
 end
 
 local warned = {}
@@ -155,7 +155,7 @@ local function sizing(options)
         end
     end
 
-    local cfg = require('arcanist').config.preview
+    local cfg = require('arcanist').config.file.inline
     return {
         max_width = cfg.thumb_width and px_to_cells(cfg.thumb_width, 'w') or nil,
         max_height = cfg.thumb_height and px_to_cells(cfg.thumb_height, 'h') or nil,
@@ -170,7 +170,7 @@ end
 local function snacks_preset(spec)
     local ok, image = pcall(require, 'snacks.image')
     if not ok then
-        warn_once('warn', 'preview.inline = "snacks" needs snacks.nvim with its image module')
+        warn_once('warn', 'file.inline.render = "snacks" needs snacks.nvim with its image module')
         return nil
     end
     if not image.supports_file(spec.path) then
@@ -216,18 +216,18 @@ local function snacks_preset(spec)
     }
 end
 
---- Resolve `config.preview.inline` to the `fun(spec)` that places one image,
---- or nil if nothing should draw.
+--- Resolve `config.file.inline.render` to the `fun(spec)` that places one
+--- image, or nil if nothing should draw.
 --- @return (fun(spec: arcanist.InlineSpec): arcanist.InlineHandle?)?
 local function renderer()
-    local inline = require('arcanist').config.preview.inline
-    if inline == nil or inline == 'snacks' then
+    local render = require('arcanist').config.file.inline.render
+    if render == nil or render == 'snacks' then
         return snacks_preset
     end
-    if type(inline) == 'function' then
-        return inline
+    if type(render) == 'function' then
+        return render
     end
-    warn_once('err', string.format('preview.inline: unknown preset %q', tostring(inline)))
+    warn_once('err', string.format('file.inline.render: unknown preset %q', tostring(render)))
     return nil
 end
 
@@ -354,7 +354,7 @@ local installed = false
 --- Install the session-wide autocmds. From plugin/ at startup, not
 --- after/ftplugin: a FileType autocmd registered from the ftplugin would miss
 --- the session's first remarkup buffer. Idempotent; the toggle API works even
---- with `config.preview.inline` unset.
+--- with `config.file.inline.render` unset.
 function M.setup()
     if installed then
         return
