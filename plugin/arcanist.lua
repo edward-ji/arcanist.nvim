@@ -14,6 +14,12 @@ vim.g.loaded_arcanist = true
 
 require('arcanist.reference').setup()
 
+-- The "gitcommit -> remarkup" reclassification, gated on "detect.gitcommit"
+-- -- same startup-vs-after/ftplugin reason as above, and it has to be a
+-- FileType autocmd rather than a filename-based ftdetect rule to catch a
+-- 'gitcommit' buffer however it got that filetype.
+require('arcanist.detect').setup()
+
 -- Inline image preview's autocmds -- same startup-vs-after/ftplugin reason as
 -- above. Inert until a buffer opts in via "preview.inline" or the inline API.
 require('arcanist.inline').setup()

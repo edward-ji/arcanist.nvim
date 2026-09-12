@@ -23,6 +23,13 @@
 -- regardless of $TMPDIR, is that the immediate parent directory is always
 -- prefixed "edit." -- so patterns below require ".../edit.<random>/"
 -- right before the basename, without caring what precedes it.
+--
+-- A plain `git commit` message can be Remarkup too, but that isn't handled
+-- here: git's own commit-message-editing files all resolve to 'gitcommit'
+-- already, via Neovim's own runtime, and any tool can set that filetype
+-- directly without going through a filename at all (a commit buffer opened
+-- by a git TUI, say). See arcanist.detect's setup() for the FileType
+-- autocmd that reclassifies a 'gitcommit' buffer instead.
 vim.filetype.add({
     extension = {
         remarkup = 'remarkup',

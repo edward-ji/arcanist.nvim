@@ -14,6 +14,10 @@ local M = {}
 --- @class arcanist.DetectConfig
 --- @field identity boolean Read a file no filename rule matched as Remarkup
 --- when its last line names a Phorge object.
+--- @field gitcommit boolean Read a 'gitcommit' buffer as Remarkup instead,
+--- in a working copy with an ".arcconfig" -- git's own
+--- commit-message-editing files all get that filetype, and so does
+--- anything else set that way.
 
 --- @class arcanist.DraftsConfig
 --- @field enabled boolean Hand an opened object's buffer to a local file:
@@ -83,6 +87,7 @@ local default_config = {
     },
     detect = {
         identity = true,
+        gitcommit = false,
     },
     drafts = {
         enabled = false,

@@ -45,30 +45,33 @@ listed under |arcanist-troubleshooting|.
 2. REMARKUP                                                *arcanist-remarkup*
                                                                  *ft-remarkup*
 
-Remarkup files have no conventional extension -- the markup is normally typed
-into a comment box rather than saved. The one place it reliably hits disk is
-when `arc` shells out to your editor, so those files are detected
-automatically: the revision message and test plan from `arc diff --edit`, the
+Remarkup has no conventional file extension of its own -- it's normally
+edited online, in a Phorge comment box, or locally in a temporary file `arc`
+manages, so recognising a buffer as Remarkup depends on how it got there.
+
+`arc` shells out to your editor on a handful of fixed filenames, always
+detected: the revision message and test plan from `arc diff --edit`, the
 comment prompt when updating a revision, the initial commit message, and the
-commit message from `arc patch`.
+commit message from `arc patch`. Also always detected is a Phorge object saved
+out to an ordinary file with a ".remarkup" extension, so reopening the file is
+Remarkup again.
 
-A ".remarkup" file is detected too. Nobody else uses that extension; it is the
-one to give a Phorge object you save out to an ordinary file, so reopening
-it is Remarkup again.
+A plain `git commit` message can be Remarkup too, in a Phorge-backed
+repository: it is where `arc diff` reads title/summary/test plan/reviewers
+from when no revision exists yet. Unlike the above, detecting it is opt-in:
+turning it on reclassifies every 'gitcommit' buffer -- the filetype git's
+own commit-message-editing files get, along with anything else assigned it
+-- as Remarkup, in any working copy with an ".arcconfig". That is every
+commit there, not just the ones headed for a revision. See
+|arcanist-config-detect.gitcommit|.
 
-A file whose name says nothing is read for its last line. A document saved
-out of an "arcanist://" buffer ends with the line naming the object it is --
+Failing all of that, a file is read for its last line: a document saved out
+of an "arcanist://" buffer ends with the line naming the object it is --
 "Maniphest Task: T123" -- and a file ending that way is taken for Remarkup,
-extension or no. See |arcanist-identity| for what counts as one.
+extension or no. See |arcanist-identity| for what counts as one. It is a
+guess -- `git log` output for a landed revision ends the same way -- so turn
+it off with |arcanist-config-detect.identity| if it misfires.
 
-It is a guess: any text ending in such a line is read the same way, `git log`
-output for a landed revision included. Turn it off with
-|arcanist-config-detect.identity|.
-
-Anywhere else, ask for it: >vim
-
-    :set filetype=remarkup
-<
 OPTIONS
 
 Nothing reflows a line in a Remarkup buffer. A single newline is a real line
@@ -546,6 +549,7 @@ works without it. These are the defaults: >lua
         },
         detect = {
             identity = true,
+            gitcommit = false,
         },
         drafts = {
             enabled = false,
@@ -587,6 +591,13 @@ detect.identity ~
     Whether a file no filename rule identified is read as Remarkup when its
     last line names a Phorge object. Set to false to leave such files alone.
     See |arcanist-remarkup|.
+
+                                            *arcanist-config-detect.gitcommit*
+detect.gitcommit ~
+    Whether a 'gitcommit' buffer -- git's own commit-message-editing files,
+    or anything else given that filetype -- is read as Remarkup instead, in
+    a working copy with an ".arcconfig". Off by default; set to true to
+    take over 'gitcommit' for every commit there. See |arcanist-remarkup|.
 
                                              *arcanist-config-drafts.enabled*
 drafts.enabled ~
