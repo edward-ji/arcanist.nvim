@@ -1,0 +1,2 @@
+src/parser.c -diff linguist-generated=true
+src/tree_sitter/parser.h -diff linguist-generated=true
