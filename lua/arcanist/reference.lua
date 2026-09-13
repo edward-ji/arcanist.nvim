@@ -930,8 +930,12 @@ local refs_query
 --- `object_reference` node. `options` is that embed's parsed "{F1, key=value,
 --- ...}" option list (see parse_embed_options) -- empty for a bare "F1" or a
 --- braced embed with none, since only the embed syntax carries options.
+--- `embed_range` is the same as `range` for a bare "F1", but for a braced
+--- "{F1, ...}" covers the whole embed -- opening "{" through closing "}" --
+--- for a caller that wants to conceal/replace the reference wholesale
+--- rather than anchor to the monogram inside it.
 --- @param bufnr integer
---- @return { monogram: string, range: integer[], options: table<string, string|boolean> }[]
+--- @return { monogram: string, range: integer[], embed_range: integer[], options: table<string, string|boolean> }[]
 function M.monograms_in(bufnr)
     local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'remarkup')
     if not ok then
@@ -955,14 +959,17 @@ function M.monograms_in(bufnr)
         local monogram = bare_monogram(node, bufnr)
         if monogram then
             local options = {}
+            local range = { node:range() }
+            local embed_range = range
             local parent = node:parent()
             if parent and parent:type() == 'object_embed' then
+                embed_range = { parent:range() }
                 local opts_node = parent:field('options')[1]
                 if opts_node then
                     options = parse_embed_options(vim.treesitter.get_node_text(opts_node, bufnr))
                 end
             end
-            out[#out + 1] = { monogram = monogram, range = { node:range() }, options = options }
+            out[#out + 1] = { monogram = monogram, range = range, embed_range = embed_range, options = options }
         end
     end
     return out

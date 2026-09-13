@@ -3,9 +3,10 @@
 A Neovim plugin for [Arcanist], a command-line interface to Phorge.
 
 Edit Phorge tasks and revisions as buffers (`:e arcanist://T123`), browse them
-in a picker, preview file objects (`:ArcFile F123`, or inline images under
-`{F123}` monograms), run `arc lint` into the quickfix list, and write Remarkup
-with highlighting, completion and file upload on paste.
+in a picker, preview file objects (`:ArcFile F123`, or inline under `{F123}`
+monograms -- an image, or a text description), run `arc lint` into the
+quickfix list, and write Remarkup with highlighting, completion and file
+upload on paste.
 
 ## Requirements
 

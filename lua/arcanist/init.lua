@@ -29,6 +29,9 @@ local M = {}
 --- @field monogram string The file's monogram, e.g. "F123".
 --- @field name string Filename as stored on Phorge.
 --- @field bytes integer? Byte size from `file.search` (nil on a cache hit).
+--- @field alt string? Phorge's own display text for this file, e.g.
+--- "duck.png (320×200 px, 1 KB)" -- `fields.alt.default` from `file.search`.
+--- Also nil on a cache hit.
 
 --- @class arcanist.InlineSpec
 --- @field buf integer Target buffer.
@@ -44,13 +47,29 @@ local M = {}
 --- @field close fun() Tear this placement down.
 
 --- @class arcanist.InlineConfig
+--- @field text boolean Conceal each referenced monogram and show Phorge's
+--- own description of the file (`fields.alt.default`, e.g. "duck.png
+--- (320×200 px, 1 KB)") in its place -- the same way a `code span` conceals
+--- its backticks in a `:h` file; the raw monogram reappears while the
+--- cursor is on that exact reference. Never downloads the file -- only one
+--- lightweight Conduit call per new reference -- so it is unaffected by
+--- `file.max_bytes`, needs no external plugin or graphics-capable
+--- terminal, and stays live as you type (`TextChanged`/`TextChangedI`)
+--- rather than waiting for `:w`. Default false.
 --- @field render (fun(spec: arcanist.InlineSpec): arcanist.InlineHandle?)|"snacks"|nil
---- The inline-preview state each Remarkup buffer opens with, and how file
---- monograms render below their reference. nil (default): off -- but
---- `require('arcanist.inline').enable()` can still turn a buffer on,
---- rendering through snacks.image. "snacks": on, via snacks.image (which
---- decides what it can draw). A function: on, called once per referenced
---- file after it downloads; return nil to leave that monogram as text.
+--- Downloads the file and draws it on the line below the reference. nil
+--- (default): off. "snacks": renders through snacks.image, which decides
+--- per file what it can draw (images, a video or PDF still frame);
+--- anything else stays as the bare monogram. A function: called once per
+--- referenced file after it downloads, with `spec.path` a real cache path;
+--- return nil to leave that monogram as-is (a file type you don't handle,
+--- say). A download is not something to redo on every keystroke, so
+--- unlike `text` this only (re)runs on buffer open, `:w`, and explicit
+--- enable/disable/toggle.
+---
+--- `text` and `render` are independent -- both can be on for the same
+--- monogram at once (the description replaces the reference, and the
+--- image still draws below it), or just one, or neither.
 --- @field thumb_width integer? Pixel width the "snacks" preset boxes an
 --- inline preview into when its embed has no "size"/"width"/"height" option,
 --- or an unrecognized/"thumb" "size" -- mirrors Phorge's own default file
@@ -66,8 +85,12 @@ local M = {}
 --- preset that renders through snacks.image. Default nil (`vim.ui.open`).
 --- @field max_bytes integer Refuse to download a file larger than this
 --- unless ":ArcFile!" is used.
---- @field inline arcanist.InlineConfig Inline-preview settings; see
---- `arcanist.InlineConfig`'s own fields.
+--- @field inline arcanist.InlineConfig The inline-preview state each
+--- Remarkup buffer opens with (see |arcanist-inline-preview|), and how file
+--- monograms render -- see `arcanist.InlineConfig`'s own fields. Both
+--- `text` and `render` off is "off" for the buffer-level state too, but
+--- `require('arcanist.inline').enable()` can still turn a buffer on (it
+--- then follows whatever `text`/`render` are set to, however sparse).
 
 --- @class arcanist.Config
 --- @field paste arcanist.PasteConfig
@@ -101,6 +124,7 @@ local default_config = {
         open = nil,
         max_bytes = 25 * 1024 * 1024,
         inline = {
+            text = false,
             render = nil,
             thumb_width = 220,
             thumb_height = nil,

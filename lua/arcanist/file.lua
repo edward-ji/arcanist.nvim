@@ -71,6 +71,54 @@ local function cached(id)
     return nil
 end
 
+--- Fetch F<id>'s metadata over Conduit -- no download, so it works
+--- regardless of size and isn't subject to `config.file.max_bytes`. Not
+--- cached: unlike a file's bytes, its `name` (and so its `alt` text) is
+--- not content-immutable -- it can be renamed on Phorge without changing
+--- the object -- and a `file.search` call is cheap next to `arc
+--- download`, so `inline.text` (the only repeat caller) just asks fresh
+--- every render rather than risk showing a stale name. `cb` runs on the
+--- main loop, `(nil, err)` on failure.
+--- @param monogram string  "F123" (also accepts "{F123}").
+--- @param opts? { quiet: boolean }  quiet: no error message -- `cb` still
+---   gets the error string.
+--- @param cb fun(info: arcanist.FileInfo?, err: string?)
+function M.info(monogram, opts, cb)
+    opts = opts or {}
+    local function fail(msg)
+        if not opts.quiet then
+            notify.err(msg)
+        end
+        return cb(nil, msg)
+    end
+
+    local id = M.file_id(monogram)
+    if not id then
+        return fail(string.format('%q is not a file monogram', tostring(monogram)))
+    end
+
+    conduit.call('file.search', { constraints = { ids = { id } } }, function(ok, result, err)
+        if not ok then
+            return fail(string.format('F%d: %s', id, err))
+        end
+        local file = result and result.data and result.data[1]
+        if not file then
+            return fail(string.format('F%d not found', id))
+        end
+
+        local name = vim.fs.basename(file.fields.name or '')
+        if name == '' then
+            name = 'F' .. id
+        end
+        cb({
+            monogram = 'F' .. id,
+            name = name,
+            bytes = file.fields.size,
+            alt = file.fields.alt and file.fields.alt.default,
+        })
+    end)
+end
+
 --- Fetch F<id> into the cache and call `cb` with the local path. No viewer --
 --- `preview()` adds that; a caller that only wants the file uses this
 --- directly. `cb` runs on the main loop, `(nil, nil, err)` on failure; a
@@ -114,20 +162,12 @@ function M.fetch(monogram, opts, cb)
         end
     end
 
-    conduit.call('file.search', { constraints = { ids = { id } } }, function(ok, result, err)
-        if not ok then
-            return fail(string.format('F%d: %s', id, err))
-        end
-        local file = result and result.data and result.data[1]
-        if not file then
-            return fail(string.format('F%d not found', id))
+    M.info(monogram, { quiet = true }, function(info, err)
+        if not info then
+            return fail(err)
         end
 
-        local name = vim.fs.basename(file.fields.name or '')
-        if name == '' then
-            name = 'F' .. id
-        end
-        local bytes = file.fields.size
+        local name, bytes = info.name, info.bytes
 
         local cap = require('arcanist').config.file.max_bytes
         if not opts.force and bytes and cap and bytes > cap then
@@ -171,7 +211,7 @@ function M.fetch(monogram, opts, cb)
                     pcall(os.remove, part)
                     return fail(string.format('F%d: %s', id, rename_err))
                 end
-                cb(dest, { monogram = 'F' .. id, name = name, bytes = bytes })
+                cb(dest, info)
             end)
         )
     end)

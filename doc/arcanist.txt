@@ -30,8 +30,8 @@ files `arc` opens in your editor. See |arcanist-remarkup|.
 "arcanist://" buffers are Phorge objects themselves. `:e arcanist://T123`
 fetches the task; `:w` writes your edits back. See |arcanist-buffers|.
 |:ArcFile|, or |gf| on a file monogram, downloads a file object and opens it
-in a viewer; with |arcanist-config-file.inline.render| set, image monograms
-draw inline in the buffer.
+in a viewer; with |arcanist-config-file.inline| set, file monograms render
+inline in the buffer.
 
 Two things have to be in place for any of it to work. `arc` must be on your
 $PATH and configured against your instance (see ~/.arcrc) -- every request
@@ -112,23 +112,43 @@ run with `style = 'ascii'`.
 
 INLINE PREVIEW                                        *arcanist-inline-preview*
 
-A file monogram ("{F123}", "F123") can draw its contents on the line below
-its reference, in any Remarkup buffer. It is a per-buffer mode, like 'spell':
-|arcanist-config-file.inline.render| is the state a buffer opens with, and the
-|arcanist.inline| Lua API turns one buffer on or off at runtime.
+A file monogram ("{F123}", "F123") can render in place, in any Remarkup
+buffer. It is a per-buffer mode, like 'spell': |arcanist-config-file.inline|
+is the state a buffer opens with, and the |arcanist.inline| Lua API turns one
+buffer on or off at runtime.
 
-It is off by default. Turning it on downloads every file the buffer
-references -- quietly, and still bounded by
-|arcanist-config-file.max_bytes|, so an oversized or missing file simply
-does not draw. What renders is up to snacks.image (or your own renderer):
-images, and a video or PDF as a single still frame; anything it cannot draw
-stays as text. A buffer refreshes on reload, and on write if a monogram was
-added or removed. Rendering needs snacks.image (or your own renderer) plus a
-graphics-capable terminal; see |arcanist-config-file.inline.render|.
+It is off by default. Two independent knobs, both under
+|arcanist-config-file.inline|, that can be on together or separately since
+they act on different parts of the reference:
 
-A braced embed's own options control its size, the same as on Phorge's web
-UI: "{F123, size=full}", "{F123, width=200}". See
-|arcanist-config-file.inline.render| for the recognized options and
+    text    Conceals the monogram itself and shows Phorge's own description
+            of the file (its `alt` text, e.g. "duck.png (320×200 px, 1 KB)")
+            in its place, the same way a `code span` conceals its backticks
+            in a `:h` file -- the raw monogram reappears while the cursor is
+            on that exact reference. Never downloads the file, so it is
+            unaffected by |arcanist-config-file.max_bytes| and needs no
+            external plugin or graphics-capable terminal -- it works over
+            one lightweight Conduit call per reference. Cheap enough to
+            stay live: it re-syncs as you type, not just on reload or write
+            -- an edit that adds a reference fetches just that one, one
+            that removes a reference just closes its placement, and
+            editing elsewhere touches nothing.
+    render  Downloads the file -- quietly, and bounded by
+            |arcanist-config-file.max_bytes|, so an oversized or missing
+            file simply does not draw -- and draws it on the line below the
+            reference. "snacks" does that via snacks.image: images, and a
+            video or PDF as a single still frame; anything else stays as the
+            bare monogram. Needs snacks.image (or your own renderer, see
+            |arcanist-config-file.inline|) plus a graphics-capable terminal.
+            A download is not something to redo on every keystroke, so
+            unlike `text` this only refreshes on reload, on write (if a
+            monogram was added or removed), and on explicit enable/
+            disable/toggle.
+
+A braced embed's own options control a "snacks" `render` placement's size,
+the same as on Phorge's web UI: "{F123, size=full}", "{F123, width=200}"
+(`text` ignores them -- there's nothing to size). See
+|arcanist-config-file.inline| for the recognized options and
 |arcanist-config-file.inline.thumb_width| for the default an embed with none
 of them gets.
 
@@ -619,7 +639,7 @@ file.open ~
     string "snacks" -- a bundled preset that renders through snacks.image
     (images, a video frame, a PDF page) and leaves the rest to the system
     handler -- or a function `fun(path, info)` where `path` is the local
-    cache copy and `info` is `{ monogram, name, bytes }`. Default nil
+    cache copy and `info` is `{ monogram, name, bytes, alt }`. Default nil
     (|vim.ui.open|). >lua
 
         file = { open = 'snacks' }
@@ -636,46 +656,102 @@ file.max_bytes ~
     |:ArcFile| refuses a file larger than this unless it is called with "!".
     Default 25 MiB.
 
-                                            *arcanist-config-file.inline.render*
-file.inline.render ~
+                                                  *arcanist-config-file.inline*
+file.inline ~
     The inline-preview state each Remarkup buffer opens with (see
-    |arcanist-inline-preview|), and how image monograms render. One of:
+    |arcanist-inline-preview|), and how file monograms render. A table with
+    two independent fields, `text` and `render` -- either, both, or neither
+    can be on, since they act on different parts of the reference (the
+    monogram's own text vs. the line below it): >lua
 
-        nil       Off. The |arcanist.inline| API can still switch a buffer
-                  on; it then renders through snacks.image. (Default.)
-        "snacks"  On. Renders through snacks.image, which decides per file
-                  what it can draw (images, a video or PDF still frame);
-                  anything else stays text.
-        function  On. `function(spec)` is called once per referenced file,
-                  after it downloads, with
+        -- Both at once: the reference reads as its description, and the
+        -- actual image still draws below it.
+        file = { inline = { text = true, render = 'snacks' } }
+<
+                                             *arcanist-config-file.inline.text*
+file.inline.text ~
+    boolean. Conceals the monogram and shows Phorge's own description of
+    the file (`fields.alt.default` from `file.search`, e.g. "duck.png
+    (320×200 px, 1 KB)") in its place; the raw monogram reappears while the
+    cursor is on that exact reference, the same way a `code span`'s
+    backticks reappear in a `:h` file. Never downloads the file -- only its
+    Conduit metadata -- so it is unaffected by |arcanist-config-file.max_bytes|
+    and works for a file of any size, and needs no external plugin or
+    graphics-capable terminal. With two monograms on one line, each reveals
+    independently based on the cursor's column, not the whole line at once
+    -- including two references to the very same file, each still gets its
+    own placement and reveals independently of the other. Default false.
 
-                      spec.buf     the buffer
-                      spec.range   { start_row, start_col, end_row, end_col },
-                                   0-indexed, of the monogram
-                      spec.path    the local cache path
-                      spec.info    { monogram, name, bytes }
-                      spec.options a braced embed's parsed
-                                   "{F123, key=value, ...}" options (lowercased
-                                   keys; a bare "key" reads as true). Empty
-                                   for a bare "F123" or a braced embed with
-                                   none.
+    Stays live as you type: it re-syncs on 'TextChanged'/'TextChangedI'
+    (Neovim's own idle-debounced "you paused while editing" events, not
+    per-keystroke ones -- see 'updatetime') and 'InsertLeave', diffing the
+    current set of referenced files against what is already shown, rather
+    than waiting for `:w` like |arcanist-config-file.inline.render| does.
+    An edit that adds a reference fetches just that one; one that removes a
+    reference just closes its placement; one that doesn't touch a
+    reference touches nothing (its placement, and whatever reveal state it
+    was in, is left alone).
 
-                  Return `{ close = function() ... end }` to have the
-                  placement torn down on reload or buffer wipe, or nil to
-                  leave that monogram as text (a file type you do not
-                  handle, say).
+    The reference always reads left to right as itself first, then its
+    annotation: the raw monogram (once revealed) comes before the
+    description, the same order an inlay hint trails after the code it
+    annotates rather than replacing it.
 
-    Turning it on downloads every file the buffer references -- quietly, and
-    still bounded by |arcanist-config-file.max_bytes|, so an oversized or
-    missing file just does not draw. "snacks" warns once if snacks.nvim is
-    not installed; a file it cannot render is left as text with no message.
+    One rough edge: the extmark holding the replacement text is a single
+    buffer-wide object, not a per-window one (unlike Neovim's native
+    `conceal` reveal, which is genuinely per-window) -- so the same buffer
+    split across two windows with cursors on different lines only reveals
+    correctly in whichever window's cursor moved last.
+
+    Combined with `render = "snacks"` on the same monogram: "snacks" draws
+    its own small anchor icon inline right before the reference (marking
+    where the image below it belongs), independently of this description --
+    "icon, reference, description" reading left to right. That icon's own
+    position isn't something this plugin controls (it comes from wherever
+    snacks decides to put it, tied to the same layout it uses to align the
+    image itself below, so moving the icon after the reference would also
+    misalign the image); this description's own position relative to it is
+    pinned by extmark priority rather than by which one last redrew, so it
+    stays put across buffer switches and reloads even though "snacks" fully
+    recreates its own placement (and so its icon) every time one comes
+    back into view.
+
+                                           *arcanist-config-file.inline.render*
+file.inline.render ~
+    (fun(spec): handle?)|"snacks"|nil. What draws below the reference, once
+    the file has downloaded. nil (default): off. "snacks": downloads the
+    file -- quietly, and bounded by |arcanist-config-file.max_bytes|, so an
+    oversized or missing file just does not draw -- and renders through
+    snacks.image, which decides per file what it can draw (images, a video
+    or PDF still frame); anything else stays as the bare monogram, and it
+    warns once if snacks.nvim is not installed. Unlike
+    |arcanist-config-file.inline.text|, a download is not something to redo
+    on every keystroke, so this only (re)runs on buffer open, `:w`, and
+    explicit enable/disable/toggle -- never live as you type. A function:
+    called once per referenced file, after it downloads, with
+
+        spec.buf     the buffer
+        spec.range   { start_row, start_col, end_row, end_col },
+                     0-indexed, of the monogram
+        spec.path    the local cache path
+        spec.info    { monogram, name, bytes, alt }
+        spec.options a braced embed's parsed "{F123, key=value, ...}"
+                     options (lowercased keys; a bare "key" reads as
+                     true). Empty for a bare "F123" or a braced embed
+                     with none.
+
+    Return `{ close = function() ... end }` to have the placement torn down
+    on reload or buffer wipe, or nil to leave that monogram as-is (a file
+    type you do not handle, say). `text` never downloads, so none of this
+    -- the cap, the quiet failure, the warning -- applies to it.
 
     "snacks" sizes a placement from `spec.options`, the same as Phorge's web
     UI: "size=full"/"size=wide" render at full resolution (bounded by the
     window); "width="/"height=" (pixels, or a percentage of the editor size)
     box it to that, never upscaling past the file's real size. Anything else
     -- including "size=thumb", the default -- falls back to
-    |arcanist-config-file.inline.thumb_width|.
+    |arcanist-config-file.inline.thumb_width|. `text` ignores `spec.options`
+    entirely -- there's nothing to size.
 
                                       *arcanist-config-file.inline.thumb_width*
 file.inline.thumb_width ~
@@ -744,17 +820,20 @@ require('arcanist').preview({monogram}, {opts})
 
     For a custom binding, `require('arcanist.file').fetch(monogram, opts, cb)`
     downloads without opening a viewer (`cb` gets `(path, info)`, or
-    `(nil, nil, err)`), and `require('arcanist.reference').monogram_at_cursor()`
-    is the monogram under the cursor.
+    `(nil, nil, err)`); `require('arcanist.file').info(monogram, opts, cb)`
+    fetches just the Conduit metadata (`cb` gets `(info)`, or `(nil, err)`)
+    without downloading anything; and
+    `require('arcanist.reference').monogram_at_cursor()` is the monogram
+    under the cursor.
 
                                                              *arcanist.inline*
 require('arcanist.inline')
 
-    Runtime control of inline image preview (see |arcanist-inline-preview|).
+    Runtime control of inline file preview (see |arcanist-inline-preview|).
     Each function takes an optional {buf} (default: the current buffer):
 
         enable({buf})       turn it on for {buf} and render
-        disable({buf})      turn it off and remove {buf}'s images
+        disable({buf})      turn it off and remove {buf}'s previews
         toggle({buf})       flip it; returns the new boolean
         is_enabled({buf})   the current state
 
@@ -762,12 +841,12 @@ require('arcanist.inline')
 
         vim.keymap.set('n', '<leader>ti', function()
             require('arcanist.inline').toggle()
-        end, { desc = 'Toggle arc inline image preview' })
+        end, { desc = 'Toggle arc inline file preview' })
 <
-    To drive a renderer of your own, set |arcanist-config-file.inline.render|
-    to a function; `require('arcanist.reference').monograms_in(buf)` (every
-    object monogram in a buffer, with ranges) is the same walk the driver
-    uses.
+    To drive a renderer of your own, set `inline.render` (see
+    |arcanist-config-file.inline|) to a function;
+    `require('arcanist.reference').monograms_in(buf)` (every object
+    monogram in a buffer, with ranges) is the same walk the driver uses.
 
 ==============================================================================
 10. TROUBLESHOOTING                                 *arcanist-troubleshooting*
