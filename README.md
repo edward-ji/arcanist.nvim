@@ -71,6 +71,17 @@ Once installed, run inside Neovim:
 
 `:checkhealth arcanist` verifies the setup: `arc`, the parser, and the rest.
 
+## Running tests
+
+```sh
+make test
+```
+
+Runs the Lua test suite under `tests/` via [mini.test], cloning it into
+`deps/` on first run.
+
+[mini.test]: https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-test.md
+
 ## Rebuilding the grammar
 
 If you edit `tree-sitter-remarkup/grammar.js`, regenerate the parser source

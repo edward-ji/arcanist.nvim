@@ -8,3 +8,6 @@
 # (grammar.js -> parser.c) during grammar development.
 /tree-sitter-remarkup/node_modules/
 /tree-sitter-remarkup/*.so
+
+# Dependencies
+/deps/

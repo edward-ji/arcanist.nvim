@@ -1,0 +1,7 @@
+#!/bin/sh
+# Fake `arc`, put ahead of the real one on $PATH by
+# tests/integration/helpers.lua so integration tests never touch a real
+# network or Phorge. Just execs into fake_arc.lua, which gets vim.json and
+# friends for free via Neovim's `-l` script mode.
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec nvim -l "$dir/../fake_arc.lua" "$@"
