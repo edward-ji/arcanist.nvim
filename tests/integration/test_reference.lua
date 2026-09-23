@@ -59,6 +59,29 @@ local function revision_response(opts)
     }
 end
 
+--- A `phriction.document.search`-shaped response envelope for one wiki
+--- document, matching HANDLERS.W's fields -- title/content live under the
+--- `content` attachment (requested via `attachments.content`), not
+--- top-level `fields` like Maniphest/Differential's `fields.name`/etc.
+--- @param opts { id: integer, slug: string, title: string, content: string? }
+--- @return table
+local function wiki_response(opts)
+    return {
+        data = {
+            {
+                id = opts.id,
+                fields = { path = opts.slug },
+                attachments = {
+                    content = {
+                        title = opts.title,
+                        content = { raw = opts.content or '' },
+                    },
+                },
+            },
+        },
+    }
+end
+
 --- Block (pumping the child's own event loop, so its async callbacks get a
 --- chance to run) until `condition_expr` -- a Lua boolean expression,
 --- evaluated inside the child -- is true, or 2s pass.
@@ -132,6 +155,49 @@ T['opening a revision renders its own (different) field list'] = function()
         '',
         'Differential Revision: D2',
     })
+end
+
+T['opening a wiki document renders it, and :write sends only the changed field'] = function()
+    -- Mirrors ':write sends exactly the changed field' below, but over
+    -- phriction.document.search/phriction.edit's own shapes (see HANDLERS.W):
+    -- a slug-keyed ref rather than a numeric id, and an edit request with
+    -- each field inlined directly rather than a transactions array wrapped
+    -- in {objectIdentifier, transactions}.
+    helpers.fixture(dir, 'call-conduit phriction.document.search', {
+        __sequence = {
+            wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding', content = 'Welcome.' }),
+            wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding', content = 'Welcome.' }),
+            wiki_response({
+                id = 9,
+                slug = 'engineering/onboarding/',
+                title = 'Onboarding',
+                content = 'Welcome (updated).',
+            }),
+        },
+    })
+    helpers.fixture(dir, 'call-conduit phriction.edit', { slug = 'engineering/onboarding/' })
+
+    open('w/engineering/onboarding/')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)'), {
+        'Onboarding',
+        '',
+        'Content:',
+        'Welcome.',
+        '',
+        'Wiki Document: w/engineering/onboarding/',
+    })
+
+    child.lua([[vim.api.nvim_buf_set_lines(0, 3, 4, false, {'Welcome (updated).'})]])
+    child.cmd('write')
+
+    local edits = calls('call-conduit phriction.edit')
+    eq(#edits, 1)
+    eq(edits[1].params, {
+        slug = 'engineering/onboarding/',
+        content = 'Welcome (updated).',
+    })
+    eq(child.lua_get('vim.bo.modified'), false)
 end
 
 T['object not found on load'] = function()
@@ -384,6 +450,28 @@ T['gf on a reference opens it as an arcanist:// buffer'] = function()
     child.type_keys('gf')
     wait_until('vim.api.nvim_buf_get_name(0):match("arcanist://T5$") ~= nil')
     -- The buffer switch is synchronous; load_reference's own fetch is not.
+    wait_until('vim.b[0].arcanist_loaded ~= nil')
+
+    eq(child.lua_get('vim.b[0].arcanist_loaded ~= nil'), true)
+end
+
+T['gf on a wiki link opens it as an arcanist:// buffer'] = function()
+    helpers.fixture(
+        dir,
+        'call-conduit phriction.document.search',
+        wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding' })
+    )
+
+    local probe = dir .. '/probe.rm'
+    local f = assert(io.open(probe, 'w'))
+    f:write('See [[engineering/onboarding]] for details.\n')
+    f:close()
+    child.cmd('edit ' .. probe)
+    child.lua([[vim.bo.filetype = 'remarkup']])
+    child.api.nvim_win_set_cursor(0, { 1, 10 }) -- inside "engineering"
+
+    child.type_keys('gf')
+    wait_until('vim.api.nvim_buf_get_name(0):match("arcanist://w/engineering/onboarding/$") ~= nil')
     wait_until('vim.b[0].arcanist_loaded ~= nil')
 
     eq(child.lua_get('vim.b[0].arcanist_loaded ~= nil'), true)

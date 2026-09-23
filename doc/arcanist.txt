@@ -23,9 +23,10 @@ arcanist.nvim brings Phorge into Neovim through `arc`, Phorge's command-line
 client. It has two halves.
 
 Remarkup -- Phorge's markup language -- becomes a filetype, with highlighting,
-completion for @mentions and #projects, |gf| on a T123 reference, and file
-upload on paste. That applies to any Remarkup buffer, including the temporary
-files `arc` opens in your editor. See |arcanist-remarkup|.
+completion for @mentions and #projects, |gf| on a T123 reference or a
+"[[wiki link]]", and file upload on paste. That applies to any Remarkup
+buffer, including the temporary files `arc` opens in your editor. See
+|arcanist-remarkup|.
 
 "arcanist://" buffers are Phorge objects themselves. `:e arcanist://T123`
 fetches the task; `:w` writes your edits back. See |arcanist-buffers|.
@@ -163,8 +164,17 @@ A Phorge object opens as a buffer named after it: >vim
 <
 Tasks (T) and revisions (D) are supported.
 
-You rarely have to type the URL. |gf| on a reference inside a Remarkup buffer
-opens it (see |arcanist-gf|), and |:ArcList| opens whatever you pick.
+Phriction wiki documents open the same way, under their own scheme: >vim
+
+    :edit arcanist://w/some/wiki/page/
+<
+Phriction addresses a document by slug path, not a monogram, so the URI is
+the slug itself with a "w/" sigil in front rather than a letter+digits ref.
+
+You rarely have to type the URL. |gf| on a T123 reference, or a
+"[[wiki link]]", inside a Remarkup buffer opens it (see |arcanist-gf|).
+|:ArcList| browses tasks and revisions in a picker; wiki documents are
+opened by URL or |gf| only.
 
 WRITING                                                       *arcanist-write*
 
@@ -209,8 +219,10 @@ By default `:w` pushes straight to Phorge. With drafts enabled -- >lua
     require('arcanist').setup({ drafts = { enabled = true } })
 <
 opening an object writes it to a plain file under `drafts.dir` (see
-|arcanist-config-drafts.dir|), named for the object ("T123", no extension),
-and hands the buffer to that file. From then on it is an ordinary file:
+|arcanist-config-drafts.dir|), named for the object ("T123", no extension --
+a wiki document nests under its own slug instead, e.g.
+"w/engineering/onboarding#"), and hands the buffer to that file. From then
+on it is an ordinary file:
 
     :w                    a normal local write. Nothing is sent.
     :ArcWrite             pushes to Phorge (see |:ArcWrite|). The identity
@@ -359,14 +371,24 @@ Go-to is Vim's own |gf| and needs nothing set up.
 
 GO-TO                                                            *arcanist-gf*
 
-|gf| on an object reference -- "T123", or "{D456}" -- opens it as an
-"arcanist://" buffer. The rest of the |gf| family works too: |gF|,
-|CTRL-W_f| to open it in a split, |CTRL-W_gf| in a tab.
+|gf| on an object reference -- "T123", or "{D456}" -- or a "[[wiki link]]"
+opens it as an "arcanist://" buffer. The rest of the |gf| family works too:
+|gF|, |CTRL-W_f| to open it in a split, |CTRL-W_gf| in a tab.
 
 It is wired through 'includeexpr', which Vim consults only when the text
 under the cursor is not already a path to an existing file. So a real
 filename under the cursor still opens that file, and a file named literally
 "T123" somewhere on your 'path' takes precedence over the task.
+
+A relative wiki link ("[[./sibling]]", "[[../parent/page]]") only resolves
+while your cursor is inside a wiki document (an "arcanist://w/..." buffer or
+its draft) -- same as Phorge itself, which only resolves one while rendering
+inside a Phriction page. Elsewhere it is inert, matching Phorge's own
+behavior there too. A link that looks like a URL ("[[https://...]]",
+"[[/some/path]]", "[[#anchor]]") is not treated as a wiki page at all --
+Phorge itself renders those as plain hyperlinks, never a document lookup --
+so 'includeexpr' declines it and plain |gf| runs on the raw text, same as on
+any other buffer.
 
 COMPLETION                                               *arcanist-completion*
 

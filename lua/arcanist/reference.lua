@@ -1,20 +1,23 @@
 -- Populates "arcanist://T123"-style buffers with a Phorge object's content,
 -- fetched live over Conduit, writes edits back on `:w`, and detects the
--- object_reference (T123, D456, ...) at a given buffer position.
+-- object_reference (T123, D456, ...) or wiki_link ([[some/page]]) at a
+-- given buffer position.
 --
 -- The buffer scheme itself is driven by BufReadCmd/BufWriteCmd autocmds on
 -- "arcanist://*" -- the idiom fugitive.nvim uses for "fugitive://" -- so
 -- reading and writing happen here regardless of how a buffer was reached:
--- `:e`/`:w arcanist://T123` typed by hand, `gf` on a reference under the
--- cursor (via the 'includeexpr' hook `M.gf()`, which resolves it with
--- `M.at()`), or `:ArcWrite`.
+-- `:e`/`:w arcanist://T123` typed by hand, `gf` on a reference or wiki_link
+-- under the cursor (via the 'includeexpr' hook `M.gf()`, which resolves it
+-- with `M.at()`/`M.wiki_at()`), or `:ArcWrite`.
 --
 -- Rendering and parsing are `arcanist.fields`' job -- see that module for
 -- the plain-text format and why every declared field is fully editable.
 --
 -- HANDLERS (below) is the registry of supported object types; adding one
--- there is what makes every feature, arcanist.list's picker included,
--- pick it up.
+-- there is what makes most features -- open/write/read/:ArcWrite, drafts --
+-- pick it up automatically. arcanist.list's picker is the one exception:
+-- it still assumes a search result's own key is `obj.id`, which isn't true
+-- of every handler (see HANDLERS.W's own note).
 
 local conduit = require('arcanist.conduit')
 local draft = require('arcanist.draft')
@@ -23,30 +26,31 @@ local notify = require('arcanist.notify')
 
 local M = {}
 
---- Parse a bare reference like "T123" into prefix + numeric id, or nil if
---- it doesn't look like one.
---- @param str string
---- @return string? prefix
---- @return integer? id
-local function parse_ref(str)
-    local prefix, id = str:match('^(%a+)(%d+)$')
-    if not prefix then
-        return nil
-    end
-    return prefix, tonumber(id)
-end
-
---- The same, for an "arcanist://<ref>" URI.
---- @param uri string
---- @return string? prefix
---- @return integer? id
-local function parse_uri(uri)
-    local ref = uri:match('^arcanist://(.+)$')
-    if not ref then
-        return nil
-    end
-    return parse_ref(ref)
-end
+--- One entry per supported object-reference kind ("T", "D", "W", ...).
+--- @class arcanist.Handler
+--- @field search string Conduit method to look an object up.
+--- @field edit string Conduit method to write it back.
+--- @field params fun(key: integer|string): table `search`'s params for
+--- this handler's own key (a numeric id, a slug, ...).
+--- @field format fun(key: integer|string): string This handler's key as
+--- the ref-string that follows "arcanist://" ("T123", "w/some/slug/").
+--- @field parse fun(ref_str: string): (integer|string)? The inverse of
+--- `format` -- the key `ref_str` names, or nil if it isn't this handler's
+--- shape.
+--- @field key_of fun(obj: table): integer|string This handler's key, read
+--- back out of one of `search`'s own results.
+--- @field build_edit_params fun(key: integer|string, transactions: table[]): table
+--- The request body `edit` actually takes -- not every Conduit edit method
+--- shares the EditEngine `{objectIdentifier, transactions}` shape.
+--- @field filetype string Highlighting for the rendered buffer.
+--- @field type string Phorge's own prose name for one ("task", "revision").
+--- @field plural string `type`, pluralized (not just suffixed -- not every
+--- noun inflects with an "s").
+--- @field identity string The label naming this type on a document's last
+--- line, spelled the way Phorge spells it.
+--- @field query_keys string[] This type's search engine's builtin queries.
+--- @field filters table<string, string> Filter word -> `constraints` key.
+--- @field fields table[] The document schema (see arcanist.fields).
 
 --- `params` for the common case: look an object up by its numeric id.
 --- @param id integer
@@ -86,19 +90,12 @@ local PRIORITY = fields.value_source({
     end,
 })
 
--- One entry per supported object-reference prefix. `search`/`params`/`edit`
--- are the Conduit methods to look an object up and write it back;
--- `filetype` picks how the buffer gets highlighted; `fields` (see
--- arcanist.fields) is the document schema.
+-- `type`/`query_keys` are what arcanist.list browses by (getBuiltinQueryNames()
+-- for the latter); `filters` maps the words it narrows by to the
+-- `constraints` key each is on this type's search method.
 --
--- `identity` is the label naming this type on a document's last line,
--- spelled the way Phorge spells it.
---
--- `type` is the name Phorge itself uses in prose for this kind of object
--- ("task", "revision" -- not the TASK/DREV PHID constants the API puts in
--- its `type` field), and `query_keys` lists the builtin queries its search
--- engine accepts, from its getBuiltinQueryNames(). Both are what
--- arcanist.list browses by.
+-- Field-by-field meaning is in the `arcanist.Handler` class doc above; what
+-- follows here is the per-type "why", not repeated there:
 --
 -- `plural` is spelled out rather than suffixed -- not every noun inflects
 -- with an "s", and "repositories" is next on the list below.
@@ -107,15 +104,51 @@ local PRIORITY = fields.value_source({
 -- has no "open", "assigned", "subscribed" or "reviewing" builtin, and
 -- asking for one is a hard ERR-BAD-QUERYKEY, not an empty result.
 --
--- `filters` maps the words arcanist.list narrows by to the `constraints`
--- key each one is on this type's search method. Differential has no
--- assignee, so it has no "owner".
+-- Differential has no assignee, so it has no "owner" filter.
 --
--- Only T/D for now -- P/F/M/C/r<repo> refs point at pastes, files, macros,
--- commits, and repositories respectively; left for later.
---- @type table<string, { search: string, edit: string, params: fun(id: integer): table, filetype: string, type: string, plural: string, identity: string, query_keys: string[], filters: table<string, string>, fields: table[] }>
+-- `key_of` differs by type because a handler's own "key" isn't always
+-- `obj.id`: that's true for T/D (Conduit's numeric id doubles as how you
+-- address the object), but Phriction addresses a document by slug, which
+-- `phriction.document.search` returns as `obj.fields.path`, a sibling of
+-- `obj.id` rather than it (see HANDLERS.W).
+--
+-- `build_edit_params` differs by type for the same reason `edit` itself
+-- does: T/D's edit methods are EditEngine-shaped (`{objectIdentifier,
+-- transactions}`), but `phriction.edit` takes `{slug, title?, content?}`
+-- with each field inlined directly, not a transactions array.
+--
+-- Only T/D/W for now -- P/F/M/C/r<repo> refs point at pastes, files,
+-- macros, commits, and repositories respectively; left for later.
+
+--- `format`/`parse`/`key_of`/`build_edit_params` for a plain monogram+digits
+--- type (T, D, ...): every one of the four is the same shape, parametrized
+--- only by the letter, since a monogram type's key *is* the numeric Conduit
+--- id and its edit method is always EditEngine-shaped. HANDLERS.W has none
+--- of that in common -- no monogram, a slug for a key, a differently-shaped
+--- edit request -- so it spells all four out itself instead of using this.
+--- @param letter string
+--- @return table
+local function monogram_handler(letter)
+    return {
+        format = function(key)
+            return letter .. key
+        end,
+        parse = function(ref_str)
+            local id = ref_str:match('^' .. letter .. '(%d+)$')
+            return id and tonumber(id)
+        end,
+        key_of = function(obj)
+            return obj.id
+        end,
+        build_edit_params = function(key, transactions)
+            return { objectIdentifier = letter .. key, transactions = transactions }
+        end,
+    }
+end
+
+--- @type table<string, arcanist.Handler>
 local HANDLERS = {
-    T = {
+    T = vim.tbl_extend('force', monogram_handler('T'), {
         search = 'maniphest.search',
         edit = 'maniphest.edit',
         params = by_id,
@@ -162,8 +195,8 @@ local HANDLERS = {
                 end,
             },
         },
-    },
-    D = {
+    }),
+    D = vim.tbl_extend('force', monogram_handler('D'), {
         search = 'differential.revision.search',
         edit = 'differential.revision.edit',
         params = by_id,
@@ -207,8 +240,103 @@ local HANDLERS = {
         -- workflow verbs (accept/reject/abandon/...), which is a different
         -- feature from editing a text field, so it's left out rather than
         -- shown and silently rejected.
+    }),
+    -- Phriction wiki documents. Unlike every other type here, there's no
+    -- monogram at all -- Phorge addresses one by slug path
+    -- ("engineering/onboarding/"), so `format`/`parse` use a literal "w/"
+    -- sigil (never sent to Conduit itself) rather than a single letter, to
+    -- tell a slug-shaped ref-string apart from a monogram+digits one.
+    --
+    -- Read is `phriction.document.search` with the `content` attachment --
+    -- title/body live there (`attachments.content.title`/`.content.raw`),
+    -- not in `fields` like Maniphest/Differential's `fields.name`/etc.
+    -- Write is the older, plain `phriction.edit` (`{slug, title?,
+    -- content?}`), not the newer-looking `phriction.document.edit`: the
+    -- latter's EditEngine currently has zero custom edit fields wired up
+    -- server-side (confirmed against the Phorge source -- it exists only to
+    -- support commenting), so it cannot write title/content at all.
+    --
+    -- arcanist.list's picker assumes a search result's own ref key is
+    -- `obj.id`; W's is `obj.fields.path` instead (see `key_of` below).
+    W = {
+        search = 'phriction.document.search',
+        edit = 'phriction.edit',
+        params = function(slug)
+            return { constraints = { paths = { slug } }, attachments = { content = true } }
+        end,
+        format = function(key)
+            return 'w/' .. key
+        end,
+        parse = function(ref_str)
+            return ref_str:match('^w/(.*)$')
+        end,
+        key_of = function(obj)
+            return obj.fields.path
+        end,
+        build_edit_params = function(key, transactions)
+            local params = { slug = key }
+            for _, t in ipairs(transactions) do
+                params[t.type] = t.value
+            end
+            return params
+        end,
+        filetype = 'remarkup',
+        type = 'wiki',
+        plural = 'wikis',
+        identity = 'Wiki Document',
+        query_keys = { 'active', 'all' },
+        filters = {},
+        fields = {
+            {
+                key = 'title',
+                kind = 'title',
+                write = fields.TEXT,
+                read = function(_, obj)
+                    return obj.attachments.content.title
+                end,
+            },
+            {
+                key = 'content',
+                kind = 'block',
+                label = 'Content',
+                write = fields.TEXT,
+                read = function(_, obj)
+                    return obj.attachments.content.content.raw
+                end,
+            },
+        },
     },
 }
+
+--- Parse a bare reference like "T123" or "w/some/slug/" into the HANDLERS
+--- key that owns its shape ("T", "W") plus that handler's own notion of a
+--- key (a numeric id for T/D, a slug string for W), or nil if it matches no
+--- handler at all. Generic over HANDLERS -- adding an entry with its own
+--- `parse` is what makes a new ref-string shape recognized here.
+--- @param str string
+--- @return string? prefix
+--- @return integer|string? key
+local function parse_ref(str)
+    for prefix, handler in pairs(HANDLERS) do
+        local key = handler.parse(str)
+        if key ~= nil then
+            return prefix, key
+        end
+    end
+    return nil
+end
+
+--- The same, for an "arcanist://<ref>" URI.
+--- @param uri string
+--- @return string? prefix
+--- @return integer|string? key
+local function parse_uri(uri)
+    local ref = uri:match('^arcanist://(.+)$')
+    if not ref then
+        return nil
+    end
+    return parse_ref(ref)
+end
 
 --- Look up `prefix`'s handler, notifying (as `action`, e.g. "open"/"write")
 --- and returning nil if it's unsupported. `ref_str` only names the target
@@ -262,12 +390,15 @@ for prefix, handler in pairs(HANDLERS) do
 
     -- Every document ends with the line naming what it is: the same field
     -- every time bar the label, and with no `write`, so it is never sent.
+    -- `handler.key_of(obj)` (rather than `obj.id` directly) is what lets
+    -- this be generic over a handler whose own key isn't the numeric
+    -- Conduit id -- see HANDLERS.W.
     table.insert(handler.fields, {
         key = 'identity',
         kind = 'line',
         label = handler.identity,
         read = function(_, obj)
-            return string.format('%s%d', prefix, obj.id)
+            return handler.format(handler.key_of(obj))
         end,
     })
 end
@@ -292,20 +423,20 @@ end
 --- The "arcanist://" URI for an object, so the scheme's spelling stays in
 --- the module whose parse_uri() has to keep matching it.
 --- @param prefix string
---- @param id integer
+--- @param key integer|string
 --- @return string
-function M.uri(prefix, id)
-    return string.format('arcanist://%s%d', prefix, id)
+function M.uri(prefix, key)
+    return 'arcanist://' .. HANDLERS[prefix].format(key)
 end
 
---- Fetch `prefix`+`id` synchronously.
+--- Fetch `prefix`+`key` synchronously.
 --- @param handler table one of HANDLERS' values
---- @param id integer
+--- @param key integer|string
 --- @return table? obj
 --- @return string? err
-local function fetch_sync(handler, id)
+local function fetch_sync(handler, key)
     local config = require('arcanist').config
-    local ok, response, err = conduit.call_sync(handler.search, handler.params(id), config.conduit_timeout)
+    local ok, response, err = conduit.call_sync(handler.search, handler.params(key), config.conduit_timeout)
     if not ok then
         return nil, err
     end
@@ -400,7 +531,7 @@ local function redirect_to_draft(bufnr, ref, force)
 end
 
 --- Populate `bufnr` (already named "arcanist://<ref>") by fetching
---- `prefix`+`id` over Conduit. Asynchronous -- there's no reason to block
+--- `prefix`+`key` over Conduit. Asynchronous -- there's no reason to block
 --- the editor while a buffer loads; only `:w` blocks.
 ---
 --- With drafts on, an "arcanist://" buffer is never a resting buffer: an
@@ -415,10 +546,10 @@ end
 --- @param bufnr integer
 --- @param handler table one of HANDLERS' values
 --- @param prefix string
---- @param id integer
+--- @param key integer|string
 --- @param overwrite boolean from `:e!`
-local function load_reference(bufnr, handler, prefix, id, overwrite)
-    local ref = string.format('%s%d', prefix, id)
+local function load_reference(bufnr, handler, prefix, key, overwrite)
+    local ref = handler.format(key)
 
     if draft.enabled() and not overwrite and draft.exists(ref) then
         redirect_to_draft(bufnr, ref, false)
@@ -432,13 +563,13 @@ local function load_reference(bufnr, handler, prefix, id, overwrite)
     vim.b[bufnr].arcanist_loaded = nil
     vim.bo[bufnr].modifiable = false
     vim.bo[bufnr].readonly = true
-    notify.info(string.format('loading %s%d...', prefix, id))
+    notify.info(string.format('loading %s...', ref))
     -- A BufReadCmd stands in for the whole read, the BufReadPre/BufReadPost
     -- either side of it included, so they are fired here or not at all.
     -- Post waits for the fetch: it means "this buffer now holds the object".
     vim.api.nvim_exec_autocmds('BufReadPre', { buffer = bufnr })
 
-    conduit.call(handler.search, handler.params(id), function(ok, response, err)
+    conduit.call(handler.search, handler.params(key), function(ok, response, err)
         if not vim.api.nvim_buf_is_valid(bufnr) then
             return
         end
@@ -448,14 +579,14 @@ local function load_reference(bufnr, handler, prefix, id, overwrite)
             -- this fetch could be a reload of a previously-loaded buffer --
             -- so it's explicitly cleared rather than left as-is.
             set_lines(bufnr, {}, false)
-            notify.err(string.format('failed to load %s%d: %s', prefix, id, err))
+            notify.err(string.format('failed to load %s: %s', ref, err))
             return
         end
 
         local obj = response.data[1]
         if not obj then
             set_lines(bufnr, {}, false)
-            notify.err(string.format('%s%d not found', prefix, id))
+            notify.err(string.format('%s not found', ref))
             return
         end
 
@@ -500,7 +631,7 @@ end
 --- name. Looking like an identity but naming no one object is.
 --- @param bufnr integer
 --- @return string? prefix
---- @return integer? id
+--- @return integer|string? key
 --- @return string? err
 local function identity_of(bufnr)
     -- prevnonblank() answers "last line with anything on it" in one step,
@@ -524,7 +655,7 @@ local function identity_of(bufnr)
     -- `arc` writes a revision's URI ("https://phorge.example.com/D456");
     -- Phorge's own parser takes that or the bare monogram, so both do here.
     local monogram = value:match('^%S+/([^/%s]+)$') or value
-    local prefix, id = parse_ref(monogram)
+    local prefix, key = parse_ref(monogram)
     if not prefix then
         return nil, nil, string.format('"%s: %s" does not name one object', label, value)
     end
@@ -539,7 +670,7 @@ local function identity_of(bufnr)
             )
     end
 
-    return prefix, id
+    return prefix, key
 end
 
 --- The filetype for the object `bufnr`'s identity line names, if it names
@@ -551,7 +682,7 @@ function M.filetype_of(bufnr)
     return prefix and HANDLERS[prefix].filetype
 end
 
---- Push `lines` (from `bufnr`) to `prefix`+`id` over Conduit. When `bufnr`
+--- Push `lines` (from `bufnr`) to `prefix`+`key` over Conduit. When `bufnr`
 --- is itself the "arcanist://<ref>" buffer being updated, runs the
 --- staleness guard first (unless `force`) and refreshes its
 --- baseline/'modified' afterward. Synchronous: the caller needs a definite
@@ -583,13 +714,13 @@ end
 --- @param bufnr integer
 --- @param handler table one of HANDLERS' values
 --- @param prefix string
---- @param id integer
+--- @param key integer|string
 --- @param lines string[]
 --- @param force boolean skip the staleness guard (from `:w!`/`:ArcWrite!`)
 --- and overwrite the server's version even if it changed since load.
 --- @return boolean pushed whether the object now matches the buffer.
-local function push(bufnr, handler, prefix, id, lines, force)
-    local ref_name = string.format('%s%d', prefix, id)
+local function push(bufnr, handler, prefix, key, lines, force)
+    local ref_name = handler.format(key)
     local config = require('arcanist').config
     -- Two separate questions. Whether this is the object's own buffer
     -- (`is_own`) decides what happens to the buffer, 'modified' above all.
@@ -605,21 +736,20 @@ local function push(bufnr, handler, prefix, id, lines, force)
         return false
     end
 
-    local id_prefix, id_id, id_err = identity_of(bufnr)
+    local id_prefix, id_key, id_err = identity_of(bufnr)
     if id_err then
         notify.err(string.format('failed to update %s: %s', ref_name, id_err))
         return false
     end
-    if id_prefix and not (id_prefix == prefix and id_id == id) then
+    if id_prefix and not (id_prefix == prefix and id_key == key) then
         -- A copy about to go over the object it was copied from. `!` doesn't
         -- override this -- it means "ignore the staleness check" -- but
         -- deleting the line does.
         notify.err(
             string.format(
-                '%s: this text is labelled %s%d. Delete the "%s:" line to push it elsewhere',
+                '%s: this text is labelled %s. Delete the "%s:" line to push it elsewhere',
                 ref_name,
-                id_prefix,
-                id_id,
+                HANDLERS[id_prefix].format(id_key),
                 HANDLERS[id_prefix].identity
             )
         )
@@ -668,7 +798,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
     -- exists to catch a conflict, and force means overwrite regardless of
     -- one, so there's nothing to check for.
     if baseline and not force then
-        local obj, err = fetch_sync(handler, id)
+        local obj, err = fetch_sync(handler, key)
         if err then
             notify.err(string.format('failed to check %s for changes: %s', ref_name, err))
             return false
@@ -709,10 +839,8 @@ local function push(bufnr, handler, prefix, id, lines, force)
         end
     end
 
-    local ok, _, err = conduit.call_sync(handler.edit, {
-        objectIdentifier = ref_name,
-        transactions = transactions,
-    }, config.conduit_timeout)
+    local ok, _, err =
+        conduit.call_sync(handler.edit, handler.build_edit_params(key, transactions), config.conduit_timeout)
     if not ok then
         notify.err(string.format('failed to update %s: %s', ref_name, err))
         return false
@@ -726,7 +854,7 @@ local function push(bufnr, handler, prefix, id, lines, force)
     -- Re-fetch for a baseline matching what the server now holds. Content
     -- is deliberately left alone so the cursor and undo history survive the
     -- save.
-    local obj, refresh_err = fetch_sync(handler, id)
+    local obj, refresh_err = fetch_sync(handler, key)
     if is_own then
         vim.bo[bufnr].modified = false
     end
@@ -753,7 +881,7 @@ end
 --- whether `!` was given.
 --- @param args table autocmd callback args
 local function write_reference(args)
-    local prefix, id = parse_uri(args.match)
+    local prefix, key = parse_uri(args.match)
     local handler = resolve_handler(prefix, args.match, 'write')
     if not handler then
         return
@@ -765,7 +893,7 @@ local function write_reference(args)
     local bufnr = args.buf
     vim.api.nvim_exec_autocmds('BufWritePre', { buffer = bufnr })
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    if push(bufnr, handler, prefix, id, lines, vim.v.cmdbang == 1) then
+    if push(bufnr, handler, prefix, key, lines, vim.v.cmdbang == 1) then
         vim.api.nvim_exec_autocmds('BufWritePost', { buffer = bufnr })
     end
 end
@@ -776,16 +904,16 @@ end
 --- place by the time the command returns.
 --- @param args table autocmd callback args
 local function read_reference(args)
-    local prefix, id = parse_uri(args.match)
+    local prefix, key = parse_uri(args.match)
     local handler = resolve_handler(prefix, args.match, 'read')
     if not handler then
         return
     end
 
     vim.api.nvim_exec_autocmds('FileReadPre', { buffer = args.buf })
-    local obj, err = fetch_sync(handler, id)
+    local obj, err = fetch_sync(handler, key)
     if not obj then
-        notify.err(string.format('failed to read %s%d: %s', prefix, id, err or 'not found'))
+        notify.err(string.format('failed to read %s: %s', handler.format(key), err or 'not found'))
         return
     end
 
@@ -808,10 +936,10 @@ end
 local function push_command(cmd_args)
     local bufnr = vim.api.nvim_get_current_buf()
     local ref_arg = vim.trim(cmd_args.args)
-    local prefix, id, target
+    local prefix, key, target
 
     if ref_arg ~= '' then
-        prefix, id = parse_ref(ref_arg)
+        prefix, key = parse_ref(ref_arg)
         target = 'arcanist://' .. ref_arg
         if not prefix then
             notify.err('invalid reference: ' .. ref_arg)
@@ -819,16 +947,16 @@ local function push_command(cmd_args)
         end
     else
         target = vim.api.nvim_buf_get_name(bufnr)
-        prefix, id = parse_uri(target)
+        prefix, key = parse_uri(target)
         if not prefix then
             -- Nothing in the name to go on, so fall back to what the text
             -- says it is.
-            local id_prefix, id_id, id_err = identity_of(bufnr)
+            local id_prefix, id_key, id_err = identity_of(bufnr)
             if id_err then
                 notify.err(':ArcWrite: ' .. id_err)
                 return
             end
-            prefix, id = id_prefix, id_id
+            prefix, key = id_prefix, id_key
             if not prefix then
                 notify.err(
                     ':ArcWrite needs a reference: this is not an "arcanist://" buffer, and its '
@@ -836,7 +964,7 @@ local function push_command(cmd_args)
                 )
                 return
             end
-            target = M.uri(prefix, id)
+            target = M.uri(prefix, key)
         end
     end
 
@@ -846,7 +974,7 @@ local function push_command(cmd_args)
     end
 
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    push(bufnr, handler, prefix, id, lines, cmd_args.bang)
+    push(bufnr, handler, prefix, key, lines, cmd_args.bang)
 end
 
 --- The bare monogram in an `object_reference` node's text: drop the leading
@@ -883,17 +1011,17 @@ local function parse_embed_options(text)
     return out
 end
 
---- The object monogram at the (0-indexed, byte-offset) `row`/`col` in
---- `bufnr` -- "T123" for a bare reference, "D4" for "{D4}" -- for any
---- reference the remarkup grammar recognises, or nil if there isn't one
---- there. Whether the plugin can *open* that monogram is the caller's to
---- decide; `M.at` layers the HANDLERS gate and the "arcanist://" prefix on
---- top.
+--- The treesitter node at the (0-indexed, byte-offset) `row`/`col` in
+--- `bufnr`'s "remarkup" parse tree, or nil if the buffer has none (parser
+--- not built, wrong filetype, ...). The shared first step of
+--- `monogram_at_node`/`wiki_at_node` below -- kept separate so `M.gf`
+--- can look it up once and try both instead of re-parsing/re-walking the
+--- same position twice on a miss.
 --- @param bufnr integer
 --- @param row integer
 --- @param col integer
---- @return string? monogram
-function M.monogram_at(bufnr, row, col)
+--- @return TSNode?
+local function node_at(bufnr, row, col)
     local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'remarkup')
     if not ok then
         return nil
@@ -901,9 +1029,15 @@ function M.monogram_at(bufnr, row, col)
     -- get_node() needs an up-to-date tree; a caller may reach this before
     -- any redraw has triggered a parse.
     parser:parse()
+    return vim.treesitter.get_node({ bufnr = bufnr, pos = { row, col } })
+end
 
-    local node = vim.treesitter.get_node({ bufnr = bufnr, pos = { row, col } })
-
+--- `monogram_at`'s own walk, from an already-resolved `node` (see node_at)
+--- rather than a position.
+--- @param node TSNode?
+--- @param bufnr integer
+--- @return string? monogram
+local function monogram_at_node(node, bufnr)
     -- "{T123}" keeps its reference in an object_embed's `ref` field, and the
     -- cursor may be on the options or the closing brace instead.
     if node and node:type() == 'embed_options' then
@@ -917,6 +1051,20 @@ function M.monogram_at(bufnr, row, col)
     end
 
     return bare_monogram(node, bufnr)
+end
+
+--- The object monogram at the (0-indexed, byte-offset) `row`/`col` in
+--- `bufnr` -- "T123" for a bare reference, "D4" for "{D4}" -- for any
+--- reference the remarkup grammar recognises, or nil if there isn't one
+--- there. Whether the plugin can *open* that monogram is the caller's to
+--- decide; `M.at` layers the HANDLERS gate and the "arcanist://" prefix on
+--- top.
+--- @param bufnr integer
+--- @param row integer
+--- @param col integer
+--- @return string? monogram
+function M.monogram_at(bufnr, row, col)
+    return monogram_at_node(node_at(bufnr, row, col), bufnr)
 end
 
 --- Lazily compiled: `query.parse` needs the `remarkup` parser registered first.
@@ -984,6 +1132,24 @@ function M.monogram_at_cursor(win)
     return M.monogram_at(vim.api.nvim_win_get_buf(win), pos[1] - 1, pos[2])
 end
 
+--- `M.at`'s own resolution, from an already-resolved `node` (see node_at)
+--- rather than a position.
+--- @param node TSNode?
+--- @param bufnr integer
+--- @return string? uri
+local function at_node(node, bufnr)
+    local text = monogram_at_node(node, bufnr)
+    if not text then
+        return nil
+    end
+    local prefix, key = parse_ref(text)
+    if not (prefix and HANDLERS[prefix]) then
+        return nil
+    end
+
+    return M.uri(prefix, key)
+end
+
 --- Return the "arcanist://<ref>" URI for the object reference at the
 --- (0-indexed, byte-offset) `row`/`col` in `bufnr` -- bare ("T123") or
 --- braced ("{T123}") -- or nil if there isn't one there, or it's a type we
@@ -993,30 +1159,177 @@ end
 --- @param col integer
 --- @return string? uri
 function M.at(bufnr, row, col)
-    local text = M.monogram_at(bufnr, row, col)
-    if not text then
+    return at_node(node_at(bufnr, row, col), bufnr)
+end
+
+--- Whether Phorge would render a wiki_link's raw `target` as a plain
+--- hyperlink rather than resolve it as a wiki-slug lookup.
+---
+--- Replicates PhutilRemarkupDocumentLinkRule::markupDocumentLink's is_uri
+--- check, which runs -- and, if it matches, claims the "[[...]]" outright,
+--- rendering it as an ordinary link -- *before* PhrictionRemarkupRule (the
+--- one that actually does the wiki-slug lookup) ever sees the text:
+--- confirmed against the real rule order, ascending by priority
+--- (`PhutilRemarkupBlockRule::getPriority()`'s own docstring: "smaller
+--- priority numbers execute sooner"), which puts the generic 150 ahead of
+--- Phriction's own 175.
+---
+--- A leading-slash target ("[[/some/page]]") is therefore a site-root-
+--- relative hyperlink, not a wiki-slug lookup either -- Phriction documents
+--- live under "/w/<slug>" (`PhrictionDocument::getSlugURI`), never at a
+--- bare root path.
+--- @param target string
+--- @return boolean
+local function is_uri(target)
+    if target == '/' then
+        return false
+    end
+    return target:match('^/') ~= nil
+        or target:find('://', 1, true) ~= nil
+        or target:match('^#') ~= nil
+        or target:match('^mailto:') ~= nil
+        or target:match('^tel:') ~= nil
+end
+
+--- Collapse a run of possibly-empty, `/`-separated path segments the way
+--- `table.concat` would want them, dropping trailing slashes first so
+--- splitting never yields a bogus empty final segment.
+--- @param path string
+--- @return string[]
+local function path_segments(path)
+    local segments = {}
+    for segment in path:gsub('/+$', ''):gmatch('[^/]+') do
+        segments[#segments + 1] = segment
+    end
+    return segments
+end
+
+--- Resolve a `./`/`../`-relative wiki_link `target` against `base` (the
+--- current buffer's own slug), the same segment-by-segment walk Phorge's
+--- own `PhrictionRemarkupRule::markupDocumentLink` does. Only meaningful
+--- with a `base` -- see M.wiki_at.
+--- @param target string
+--- @param base string
+--- @return string slug
+local function resolve_relative(target, base)
+    local parts = path_segments(base)
+    for _, part in ipairs(path_segments(target)) do
+        if part == '.' then
+            -- consumed, contributes nothing
+        elseif part == '..' then
+            parts[#parts] = nil
+        else
+            parts[#parts + 1] = part
+        end
+    end
+    return table.concat(parts, '/') .. '/'
+end
+
+--- A non-relative wiki_link `target` as a slug: trimmed, with duplicate
+--- `/`s collapsed, no leading `/`, exactly one trailing `/`. Deliberately
+--- not a full reimplementation of Phorge's own `PhabricatorSlug::normalize`
+--- (case-folding, character banning) -- the server does that when
+--- `phriction.document.search` runs, and a real mismatch just surfaces as
+--- "not found" like any other 404.
+--- @param target string
+--- @return string slug
+local function normalize_slug(target)
+    local slug = vim.trim(target):gsub('/+', '/'):gsub('^/', ''):gsub('/*$', '')
+    return slug .. '/'
+end
+
+--- The slug `bufnr` is itself loaded as, if it names one -- the base a
+--- relative wiki_link resolves against. nil everywhere else, same as
+--- Phorge, whose relative-link resolution only ever runs while rendering
+--- *inside* a Phriction document (`PhrictionRemarkupRule::getRelativeBaseURI`).
+---
+--- Goes through `identity_of` (the buffer's own last line), not
+--- `arcanist_loaded`: the latter is only ever set on a *live*
+--- "arcanist://" buffer's own render, never on the draft file
+--- `redirect_to_draft` hands it off to -- so with drafts on, the buffer a
+--- relative link is actually resolved from is almost always the draft, and
+--- `arcanist_loaded` alone would make this silently never fire there.
+--- @param bufnr integer
+--- @return string?
+local function wiki_base(bufnr)
+    local prefix, key = identity_of(bufnr)
+    return prefix == 'W' and key or nil
+end
+
+--- `wiki_at`'s own walk, from an already-resolved `node` (see node_at)
+--- rather than a position.
+--- @param node TSNode?
+--- @param bufnr integer
+--- @return string? uri
+local function wiki_at_node(node, bufnr)
+    -- Unlike a bare "object_reference" (a leaf token, so the cursor lands on
+    -- it directly), "target"/"label" are wiki_link's own child fields --
+    -- the cursor typically sitting inside the link text lands on one of
+    -- those, not wiki_link itself.
+    if node and (node:type() == 'link_target' or node:type() == 'link_label') then
+        node = node:parent()
+    end
+    if not node or node:type() ~= 'wiki_link' then
         return nil
     end
-    local prefix, id = parse_ref(text)
-    if not (prefix and HANDLERS[prefix]) then
+    local target_node = node:field('target')[1]
+    if not target_node then
         return nil
     end
 
-    return M.uri(prefix, id)
+    local target = vim.treesitter.get_node_text(target_node, bufnr)
+    if is_uri(target) then
+        return nil
+    end
+    -- A same-page "#anchor" has no meaning for a navigation target; dropped
+    -- rather than jumped to, like the rest of the target after it.
+    target = target:match('^([^#]*)')
+
+    local slug
+    if target:sub(1, 2) == './' or target:sub(1, 3) == '../' then
+        local base = wiki_base(bufnr)
+        if not base then
+            return nil
+        end
+        slug = resolve_relative(target, base)
+    else
+        slug = normalize_slug(target)
+    end
+
+    return M.uri('W', slug)
+end
+
+--- Return the "arcanist://w/<slug>" URI for the wiki_link at the
+--- (0-indexed, byte-offset) `row`/`col` in `bufnr`, or nil if there isn't
+--- one there, it's a target Phorge would treat as a plain hyperlink rather
+--- than a wiki page (see is_uri), or it's a `./`/`../`-relative link with no
+--- buffer of origin to resolve it against.
+--- @param bufnr integer
+--- @param row integer
+--- @param col integer
+--- @return string? uri
+function M.wiki_at(bufnr, row, col)
+    return wiki_at_node(node_at(bufnr, row, col), bufnr)
 end
 
 --- 'includeexpr' hook for Remarkup buffers. Returns the "arcanist://" URI
---- for an object reference under the cursor -- `gf` and the rest of its
---- family then open that via the BufReadCmd (see M.setup) -- or `fname`
---- unchanged, so Vim's own file lookup handles anything else.
+--- for an object reference or wiki_link under the cursor -- `gf` and the
+--- rest of its family then open that via the BufReadCmd (see M.setup) --
+--- or `fname` unchanged, so Vim's own file lookup handles anything else.
 ---
 --- Vim only evaluates 'includeexpr' when the raw <cfile> is not already an
---- existing file, so a real path under the cursor never reaches here.
+--- existing file, so a real path under the cursor never reaches here. The
+--- node is resolved once here and handed to both `at_node`/`wiki_at_node`
+--- rather than calling `M.at`/`M.wiki_at`, which would each reparse and
+--- rewalk the same position on their own.
 --- @param fname string Vim's extracted <cfile>, and the fallback.
 --- @return string
 function M.gf(fname)
+    local bufnr = vim.api.nvim_get_current_buf()
     local pos = vim.api.nvim_win_get_cursor(0)
-    return M.at(vim.api.nvim_get_current_buf(), pos[1] - 1, pos[2]) or fname
+    local row, col = pos[1] - 1, pos[2]
+    local node = node_at(bufnr, row, col)
+    return at_node(node, bufnr) or wiki_at_node(node, bufnr) or fname
 end
 
 local installed = false
@@ -1037,10 +1350,10 @@ function M.setup()
         group = augroup,
         pattern = 'arcanist://*',
         callback = function(args)
-            local prefix, id = parse_uri(args.match)
+            local prefix, key = parse_uri(args.match)
             local handler = resolve_handler(prefix, args.match, 'open')
             if handler then
-                load_reference(args.buf, handler, prefix, id, vim.v.cmdbang == 1)
+                load_reference(args.buf, handler, prefix, key, vim.v.cmdbang == 1)
             end
         end,
     })
