@@ -151,4 +151,49 @@ T['write_value() / changed()']['M.TEXT is changed when there is no baseline yet'
     eq(fields_mod.changed({ write = fields_mod.TEXT }, nil, 'Open'), true)
 end
 
+T['write_value() / changed()']['M.project_list() is unchanged when re-ordered/re-cased/deduped'] = function()
+    local projects = { write = fields_mod.project_list() }
+    eq(fields_mod.changed(projects, '#qa #infra', '#infra #QA #qa'), false)
+end
+
+T['write_value() / changed()']['M.project_list() is changed when the tag set genuinely differs'] = function()
+    local projects = { write = fields_mod.project_list() }
+    eq(fields_mod.changed(projects, '#qa', '#qa #infra'), true)
+end
+
+T['write_value() / changed()']['M.project_list() is changed when there is no baseline yet'] = function()
+    local projects = { write = fields_mod.project_list() }
+    eq(fields_mod.changed(projects, nil, ''), true)
+end
+
+T['write_value() / changed()']['M.project_list() treats a blank line as no tags, not a change'] = function()
+    local projects = { write = fields_mod.project_list() }
+    eq(fields_mod.changed(projects, '', ''), false)
+end
+
+T['render()/parse() round trip'] = MiniTest.new_set()
+
+T['render()/parse() round trip']['an empty-valued line field round-trips without error'] = function()
+    -- Regression test: M.render() puts a trailing space after a 'line'
+    -- field's label even when its value is empty ("Projects: "), and
+    -- vim.trim() strips that trailing space back off before M.parse() ever
+    -- sees the line -- so the bare "Projects:" it's left matching has to be
+    -- recognized as "this field, empty", not misparsed as prose with no
+    -- label at all (arcanist.fields.project_list's Projects field hits this
+    -- whenever a task/revision/wiki page has no tags).
+    local blank_fields = {
+        { key = 'name', kind = 'title', read = function(f) return f.name end, write = fields_mod.TEXT },
+        { key = 'projects', kind = 'line', label = 'Projects', read = function(f) return f.projects end, write = fields_mod.TEXT },
+        { key = 'status', kind = 'line', label = 'Status', read = function(f) return f.status end, write = fields_mod.TEXT },
+    }
+    local obj = { fields = { name = 'Fix bug', projects = '', status = 'Open' } }
+
+    local lines = fields_mod.render(blank_fields, obj)
+    eq(lines, { 'Fix bug', '', 'Projects: ', 'Status: Open' })
+
+    local values, err = fields_mod.parse(blank_fields, lines)
+    eq(err, nil)
+    eq(values, { name = 'Fix bug', projects = '', status = 'Open' })
+end
+
 return T

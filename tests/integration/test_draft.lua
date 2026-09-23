@@ -129,6 +129,7 @@ T[':ArcWrite from a draft buffer pushes to the server'] = function()
             { type = 'title', value = 'My revision (edited)' },
             { type = 'summary', value = 'Summary.' },
             { type = 'testPlan', value = 'Plan.' },
+            { type = 'projects.set', value = {} },
         },
     })
     -- A draft push has no baseline to conflict-check or refresh against.

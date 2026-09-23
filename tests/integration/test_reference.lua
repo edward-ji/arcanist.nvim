@@ -22,7 +22,9 @@ local T = MiniTest.new_set({
 
 --- A `maniphest.search`-shaped response envelope for one task, matching
 --- what HANDLERS.T's fields read from (lua/arcanist/reference.lua).
---- @param opts { id: integer, title: string, status: string?, priority: string?, description: string? }
+--- `projects` (project PHIDs) is the one field that isn't rendered from
+--- this response alone -- see `resolve_projects` in reference.lua.
+--- @param opts { id: integer, title: string, status: string?, priority: string?, description: string?, projects: string[]? }
 --- @return table
 local function task_response(opts)
     return {
@@ -35,6 +37,7 @@ local function task_response(opts)
                     priority = { name = opts.priority or 'Normal' },
                     description = { raw = opts.description or '' },
                 },
+                attachments = { projects = { projectPHIDs = opts.projects or {} } },
             },
         },
     }
@@ -63,13 +66,16 @@ end
 --- document, matching HANDLERS.W's fields -- title/content live under the
 --- `content` attachment (requested via `attachments.content`), not
 --- top-level `fields` like Maniphest/Differential's `fields.name`/etc.
---- @param opts { id: integer, slug: string, title: string, content: string? }
+--- `phid` defaults to a fixed fake -- only Projects' write path
+--- (build_edit_calls' own `objectIdentifier` lookup) ever reads it.
+--- @param opts { id: integer, slug: string, title: string, content: string?, phid: string? }
 --- @return table
 local function wiki_response(opts)
     return {
         data = {
             {
                 id = opts.id,
+                phid = opts.phid or 'PHID-WIKI-fake',
                 fields = { path = opts.slug },
                 attachments = {
                     content = {
@@ -131,6 +137,8 @@ T['opening an arcanist:// buffer renders the fetched object'] = function()
         'Description:',
         'Steps to reproduce.',
         '',
+        'Project Tags: ',
+        '',
         'Maniphest Task: T5',
     })
 end
@@ -152,6 +160,8 @@ T['opening a revision renders its own (different) field list'] = function()
         '',
         'Test Plan:',
         'Ran tests.',
+        '',
+        'Project Tags: ',
         '',
         'Differential Revision: D2',
     })
@@ -184,6 +194,8 @@ T['opening a wiki document renders it, and :write sends only the changed field']
         '',
         'Content:',
         'Welcome.',
+        '',
+        'Project Tags: ',
         '',
         'Wiki Document: w/engineering/onboarding/',
     })
@@ -377,6 +389,91 @@ T['editing a value_source field to an invalid value refuses the write'] = functi
         'arcanist.nvim: failed to update T5: "Not A Real Status" is not valid -- expected one '
             .. 'of: Open, Resolved'
     )
+end
+
+T['rendering Projects resolves project PHIDs to their hashtags'] = function()
+    helpers.fixture(
+        dir,
+        'call-conduit maniphest.search',
+        task_response({ id = 5, title = 'Fix bug', projects = { 'PHID-PROJ-1', 'PHID-PROJ-2' } })
+    )
+    helpers.fixture(dir, 'call-conduit project.search', {
+        data = {
+            { phid = 'PHID-PROJ-1', fields = { slug = 'qa' } },
+            { phid = 'PHID-PROJ-2', fields = { slug = 'infra' } },
+        },
+    })
+
+    open('T5')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 7, 8, false)')[1], 'Project Tags: #qa #infra')
+end
+
+T['editing Projects resolves hashtags and sends projects.set'] = function()
+    helpers.fixture(dir, 'call-conduit maniphest.search', {
+        __sequence = {
+            task_response({ id = 5, title = 'Fix bug' }),
+            task_response({ id = 5, title = 'Fix bug' }),
+            task_response({ id = 5, title = 'Fix bug', projects = { 'PHID-PROJ-qa' } }),
+        },
+    })
+    helpers.fixture(dir, 'call-conduit project.search', {
+        maps = { slugMap = { qa = { slug = 'qa', projectPHID = 'PHID-PROJ-qa' } } },
+    })
+    helpers.fixture(dir, 'call-conduit maniphest.edit', { object = { id = 5 } })
+
+    open('T5')
+    child.lua([[vim.api.nvim_buf_set_lines(0, 7, 8, false, {'Project Tags: #qa'})]])
+    child.cmd('write')
+
+    local edits = calls('call-conduit maniphest.edit')
+    eq(#edits, 1)
+    eq(edits[1].params.transactions, { { type = 'projects.set', value = { 'PHID-PROJ-qa' } } })
+end
+
+T['editing Projects to an unknown hashtag refuses the write'] = function()
+    helpers.capture_notify(child)
+    helpers.fixture(dir, 'call-conduit maniphest.search', task_response({ id = 5, title = 'Fix bug' }))
+    helpers.fixture(dir, 'call-conduit project.search', { maps = { slugMap = {} } })
+
+    open('T5')
+    child.lua([[vim.api.nvim_buf_set_lines(0, 7, 8, false, {'Project Tags: #nonexistent'})]])
+    child.cmd('write')
+
+    eq(#calls('call-conduit maniphest.edit'), 0)
+    eq(last_notification(), 'arcanist.nvim: failed to update T5: no such project: #nonexistent')
+end
+
+T['editing Projects on a wiki page sends its own phriction.document.edit call'] = function()
+    -- Projects has no home in `phriction.edit` at all (see HANDLERS.W), so
+    -- editing only Projects should never call it -- everything routes
+    -- through the separate `phriction.document.edit` call instead, against
+    -- the document's PHID rather than its slug.
+    helpers.fixture(
+        dir,
+        'call-conduit phriction.document.search',
+        wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding', content = 'Welcome.' })
+    )
+    helpers.fixture(dir, 'call-conduit project.search', {
+        maps = { slugMap = { qa = { slug = 'qa', projectPHID = 'PHID-PROJ-qa' } } },
+    })
+    helpers.fixture(dir, 'call-conduit phriction.document.edit', { object = { id = 9 } })
+
+    open('w/engineering/onboarding/')
+    child.lua([[vim.api.nvim_buf_set_lines(0, 5, 6, false, {'Project Tags: #qa'})]])
+    child.cmd('write')
+
+    eq(#calls('call-conduit phriction.edit'), 0)
+    local edits = calls('call-conduit phriction.document.edit')
+    eq(#edits, 1)
+    eq(edits[1].params, {
+        objectIdentifier = 'PHID-WIKI-fake',
+        transactions = { { type = 'projects.set', value = { 'PHID-PROJ-qa' } } },
+    })
+    -- build_edit_calls got the document (and its PHID) from push()'s own
+    -- staleness check rather than fetching it again itself: load + staleness
+    -- check + post-write baseline refresh, no more.
+    eq(#calls('call-conduit phriction.document.search'), 3)
 end
 
 T['a mismatched identity line refuses to push elsewhere'] = function()

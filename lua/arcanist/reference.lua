@@ -23,13 +23,13 @@ local conduit = require('arcanist.conduit')
 local draft = require('arcanist.draft')
 local fields = require('arcanist.fields')
 local notify = require('arcanist.notify')
+local source = require('arcanist.source')
 
 local M = {}
 
 --- One entry per supported object-reference kind ("T", "D", "W", ...).
 --- @class arcanist.Handler
 --- @field search string Conduit method to look an object up.
---- @field edit string Conduit method to write it back.
 --- @field params fun(key: integer|string): table `search`'s params for
 --- this handler's own key (a numeric id, a slug, ...).
 --- @field format fun(key: integer|string): string This handler's key as
@@ -39,9 +39,16 @@ local M = {}
 --- shape.
 --- @field key_of fun(obj: table): integer|string This handler's key, read
 --- back out of one of `search`'s own results.
---- @field build_edit_params fun(key: integer|string, transactions: table[]): table
---- The request body `edit` actually takes -- not every Conduit edit method
---- shares the EditEngine `{objectIdentifier, transactions}` shape.
+--- @field build_edit_calls fun(key: integer|string, transactions: table[], known_obj: table?): ({ method: string, params: table }[])?, string?
+--- Every Conduit call `push()` should make to apply `transactions`, or nil
+--- plus an error if they couldn't be built. Not every handler writes
+--- through one call to one method (see W, whose Projects field needs a
+--- second Conduit method), so this is the one write-shape every handler
+--- implements, rather than a single-call default with an opt-in override
+--- for the exception. `known_obj`, when the caller already fetched the
+--- object moments earlier (its own staleness check), lets a handler avoid
+--- re-fetching it just to read something off it (see W, which needs the
+--- object's PHID).
 --- @field filetype string Highlighting for the rendered buffer.
 --- @field type string Phorge's own prose name for one ("task", "revision").
 --- @field plural string `type`, pluralized (not just suffixed -- not every
@@ -53,10 +60,15 @@ local M = {}
 --- @field fields table[] The document schema (see arcanist.fields).
 
 --- `params` for the common case: look an object up by its numeric id.
+--- Every handler here has a Projects field, so every handler's `params`
+--- requests the `projects` attachment -- see `resolve_projects`/
+--- `resolve_projects_sync` below for why a second lookup still has to
+--- follow before that attachment's bare PHIDs are anything a document can
+--- round-trip as text.
 --- @param id integer
 --- @return table
 local function by_id(id)
-    return { constraints = { ids = { id } } }
+    return { constraints = { ids = { id } }, attachments = { projects = true } }
 end
 
 local STATUS = fields.value_source({
@@ -90,6 +102,36 @@ local PRIORITY = fields.value_source({
     end,
 })
 
+-- Every handler below has a Projects field, sharing one `write`
+-- (fields.project_list) and one `read` -- both text-shaped, working purely
+-- off `obj._project_tags`, the array of hashtags `resolve_projects`/
+-- `resolve_projects_sync` stash there before render() ever sees the object.
+-- Its transaction type is the literal wire value "projects.set" (not just
+-- "projects") -- confirmed against maniphest.edit/differential.revision.edit/
+-- phriction.document.edit's own error listings of valid transaction types,
+-- all three of which take it verbatim (see HANDLERS.W's `build_edit_calls`
+-- for why Wiki has to send it through a different Conduit call than its
+-- other fields).
+local PROJECTS = fields.project_list()
+
+--- @param _ table (obj.fields; unused -- see `resolve_projects` above)
+--- @param obj table
+--- @return string
+local function read_projects(_, obj)
+    return table.concat(
+        vim.tbl_map(function(tag)
+            return '#' .. tag
+        end, obj._project_tags or {}),
+        ' '
+    )
+end
+
+--- One shared field-list entry, reused verbatim by every handler below --
+--- nothing here varies per handler, and nothing in arcanist.fields ever
+--- mutates a field table in place (only `handler.fields`, the array it
+--- sits in, gets appended to), so sharing the one table instance is safe.
+local PROJECTS_FIELD = { key = 'projects.set', kind = 'line', label = 'Project Tags', write = PROJECTS, read = read_projects }
+
 -- `type`/`query_keys` are what arcanist.list browses by (getBuiltinQueryNames()
 -- for the latter); `filters` maps the words it narrows by to the
 -- `constraints` key each is on this type's search method.
@@ -112,23 +154,27 @@ local PRIORITY = fields.value_source({
 -- `phriction.document.search` returns as `obj.fields.path`, a sibling of
 -- `obj.id` rather than it (see HANDLERS.W).
 --
--- `build_edit_params` differs by type for the same reason `edit` itself
--- does: T/D's edit methods are EditEngine-shaped (`{objectIdentifier,
--- transactions}`), but `phriction.edit` takes `{slug, title?, content?}`
--- with each field inlined directly, not a transactions array.
+-- `build_edit_calls` differs by type similarly: T/D's edit methods are
+-- EditEngine-shaped (`{objectIdentifier, transactions}`), one call for
+-- every field, but `phriction.edit` takes `{slug, title?, content?}` with
+-- each field inlined directly, and Projects needs a second call to a
+-- different method entirely (see HANDLERS.W).
 --
 -- Only T/D/W for now -- P/F/M/C/r<repo> refs point at pastes, files,
 -- macros, commits, and repositories respectively; left for later.
 
---- `format`/`parse`/`key_of`/`build_edit_params` for a plain monogram+digits
+--- `format`/`parse`/`key_of`/`build_edit_calls` for a plain monogram+digits
 --- type (T, D, ...): every one of the four is the same shape, parametrized
---- only by the letter, since a monogram type's key *is* the numeric Conduit
---- id and its edit method is always EditEngine-shaped. HANDLERS.W has none
---- of that in common -- no monogram, a slug for a key, a differently-shaped
---- edit request -- so it spells all four out itself instead of using this.
+--- only by the letter and its edit method, since a monogram type's key *is*
+--- the numeric Conduit id and its edit method is always EditEngine-shaped
+--- -- one call, `{objectIdentifier, transactions}`. HANDLERS.W has none of
+--- that in common -- no monogram, a slug for a key, Projects needing a
+--- second call to a different method -- so it spells out its own
+--- `build_edit_calls` instead of using this.
 --- @param letter string
+--- @param edit_method string
 --- @return table
-local function monogram_handler(letter)
+local function monogram_handler(letter, edit_method)
     return {
         format = function(key)
             return letter .. key
@@ -140,8 +186,8 @@ local function monogram_handler(letter)
         key_of = function(obj)
             return obj.id
         end,
-        build_edit_params = function(key, transactions)
-            return { objectIdentifier = letter .. key, transactions = transactions }
+        build_edit_calls = function(key, transactions)
+            return { { method = edit_method, params = { objectIdentifier = letter .. key, transactions = transactions } } }
         end,
     }
 end
@@ -159,9 +205,8 @@ end
 
 --- @type table<string, arcanist.Handler>
 local HANDLERS = {
-    T = vim.tbl_extend('force', monogram_handler('T'), {
+    T = vim.tbl_extend('force', monogram_handler('T', 'maniphest.edit'), {
         search = 'maniphest.search',
-        edit = 'maniphest.edit',
         params = by_id,
         filetype = 'remarkup',
         type = 'task',
@@ -205,11 +250,11 @@ local HANDLERS = {
                     return f.description and f.description.raw
                 end,
             },
+            PROJECTS_FIELD,
         },
     }),
-    D = vim.tbl_extend('force', monogram_handler('D'), {
+    D = vim.tbl_extend('force', monogram_handler('D', 'differential.revision.edit'), {
         search = 'differential.revision.search',
-        edit = 'differential.revision.edit',
         params = by_id,
         filetype = 'remarkup',
         type = 'revision',
@@ -244,6 +289,7 @@ local HANDLERS = {
                     return f.testPlan
                 end,
             },
+            PROJECTS_FIELD,
         },
         -- Deliberately no Status field: differential.revision.edit has no
         -- transaction for it at all (confirmed live -- it errors "invalid
@@ -263,17 +309,26 @@ local HANDLERS = {
     -- not in `fields` like Maniphest/Differential's `fields.name`/etc.
     -- Write is the older, plain `phriction.edit` (`{slug, title?,
     -- content?}`), not the newer-looking `phriction.document.edit`: the
-    -- latter's EditEngine currently has zero custom edit fields wired up
-    -- server-side (confirmed against the Phorge source -- it exists only to
-    -- support commenting), so it cannot write title/content at all.
+    -- latter's EditEngine has its own *create*-object policy hardcoded to
+    -- POLICY_NOONE, and (confirmed against the Phorge source) exists mainly
+    -- to support the comment UI action -- but that lockout is specific to
+    -- *creating* documents through it, not editing an existing one, so
+    -- `objectIdentifier`+`projects.set` against an already-loaded document
+    -- works fine (confirmed live) and is Projects' own write path, wired up
+    -- in `build_edit_calls` below: title/content still go through the plain
+    -- `phriction.edit`, but Projects has no home there at all (its
+    -- `defineParamTypes` has no such parameter), so it takes the second
+    -- Conduit call instead.
     --
     -- arcanist.list's picker assumes a search result's own ref key is
     -- `obj.id`; W's is `obj.fields.path` instead (see `key_of` below).
     W = {
         search = 'phriction.document.search',
-        edit = 'phriction.edit',
         params = function(slug)
-            return { constraints = { paths = { slug } }, attachments = { content = true } }
+            return {
+                constraints = { paths = { slug } },
+                attachments = { content = true, projects = true },
+            }
         end,
         format = function(key)
             return 'w/' .. key
@@ -288,12 +343,56 @@ local HANDLERS = {
         key_of = function(obj)
             return obj.fields.path
         end,
-        build_edit_params = function(key, transactions)
-            local params = { slug = key }
+        -- Wiki is the one handler whose fields don't all write through the
+        -- same Conduit method: every transaction except Projects goes to
+        -- `phriction.edit` (`{slug, title?, content?}`, each field inlined
+        -- directly rather than an EditEngine-shaped transactions array);
+        -- Projects goes to `phriction.document.edit` instead, which needs
+        -- the document's PHID as `objectIdentifier` -- not `key` (the slug).
+        -- `known_obj`, when push() already fetched the document moments
+        -- earlier (its own staleness check), saves resolving that PHID with
+        -- a second, otherwise-redundant `phriction.document.search`.
+        build_edit_calls = function(key, transactions, known_obj)
+            local params, projects_transaction
             for _, t in ipairs(transactions) do
-                params[t.type] = t.value
+                if t.type == 'projects.set' then
+                    projects_transaction = t
+                else
+                    params = params or { slug = key }
+                    params[t.type] = t.value
+                end
             end
-            return params
+
+            local calls = {}
+            if params then
+                table.insert(calls, { method = 'phriction.edit', params = params })
+            end
+
+            if projects_transaction then
+                local phid = known_obj and known_obj.phid
+                if not phid then
+                    local config = require('arcanist').config
+                    local ok, response, err = conduit.call_sync(
+                        'phriction.document.search',
+                        { constraints = { paths = { key } } },
+                        config.conduit_timeout
+                    )
+                    if not ok then
+                        return nil, string.format('failed to resolve w/%s: %s', key, err)
+                    end
+                    local doc = response.data[1]
+                    if not doc then
+                        return nil, string.format('w/%s no longer exists', key)
+                    end
+                    phid = doc.phid
+                end
+                table.insert(calls, {
+                    method = 'phriction.document.edit',
+                    params = { objectIdentifier = phid, transactions = { projects_transaction } },
+                })
+            end
+
+            return calls
         end,
         filetype = 'remarkup',
         type = 'wiki',
@@ -319,6 +418,7 @@ local HANDLERS = {
                     return obj.attachments.content.content.raw
                 end,
             },
+            PROJECTS_FIELD,
         },
     },
 }
@@ -405,6 +505,8 @@ for prefix, handler in pairs(HANDLERS) do
 
     -- Every document ends with the line naming what it is: the same field
     -- every time bar the label, and with no `write`, so it is never sent.
+    -- `separate = true` marks it a trailer for M.render (blank-separated
+    -- from whatever precedes it, regardless of that field's own kind).
     -- `handler.key_of(obj)` (rather than `obj.id` directly) is what lets
     -- this be generic over a handler whose own key isn't the numeric
     -- Conduit id -- see HANDLERS.W.
@@ -412,6 +514,7 @@ for prefix, handler in pairs(HANDLERS) do
         key = 'identity',
         kind = 'line',
         label = handler.identity,
+        separate = true,
         read = function(_, obj)
             return handler.format(handler.key_of(obj))
         end,
@@ -444,6 +547,59 @@ function M.uri(prefix, key)
     return 'arcanist://' .. HANDLERS[prefix].format(key)
 end
 
+--- Every handler's `params` requests the `projects` attachment, but Conduit
+--- only ever hands that back as bare PHIDs -- never the hashtag text a
+--- document round-trips as. This turns a `project.search` fetch (via
+--- `arcanist.source`, so it's cached the same way Status/Priority are) for
+--- those PHIDs into the tag list `read_projects` reads, in the same order
+--- as `phids`; a PHID the lookup couldn't explain (a failed request, or --
+--- in principle -- a project deleted between the two calls) is kept as-is
+--- rather than dropped, so a failure here degrades to an odd-looking tag
+--- rather than silently losing one.
+--- @param items table[]?
+--- @param phids string[]
+--- @return string[]
+local function tags_from_projects(items, phids)
+    local slug_by_phid = {}
+    for _, project in ipairs(items or {}) do
+        slug_by_phid[project.phid] = project.fields.slug
+    end
+    return vim.tbl_map(function(phid)
+        return slug_by_phid[phid] or phid
+    end, phids)
+end
+
+--- Populate `obj._project_tags` (read_projects' own input) by resolving its
+--- `attachments.projects.projectPHIDs`, if any -- async, so `load_reference`
+--- can chain it after `handler.search` without ever blocking the editor.
+--- @param obj table
+--- @param callback fun()
+local function resolve_projects(obj, callback)
+    local phids = vim.tbl_get(obj, 'attachments', 'projects', 'projectPHIDs')
+    if not phids or #phids == 0 then
+        obj._project_tags = {}
+        callback()
+        return
+    end
+    source.fetch_async('project.search', { constraints = { phids = phids } }, function(items)
+        obj._project_tags = tags_from_projects(items, phids)
+        callback()
+    end)
+end
+
+--- `resolve_projects`, blocking -- for the call sites (`fetch_sync`'s own
+--- callers) that are already synchronous by design.
+--- @param obj table
+local function resolve_projects_sync(obj)
+    local phids = vim.tbl_get(obj, 'attachments', 'projects', 'projectPHIDs')
+    if not phids or #phids == 0 then
+        obj._project_tags = {}
+        return
+    end
+    local items = source.fetch('project.search', { constraints = { phids = phids } })
+    obj._project_tags = tags_from_projects(items, phids)
+end
+
 --- Fetch `prefix`+`key` synchronously.
 --- @param handler table one of HANDLERS' values
 --- @param key integer|string
@@ -455,7 +611,11 @@ local function fetch_sync(handler, key)
     if not ok then
         return nil, err
     end
-    return response.data[1], nil
+    local obj = response.data[1]
+    if obj then
+        resolve_projects_sync(obj)
+    end
+    return obj, nil
 end
 
 --- Replace `bufnr`'s content without leaving it dirty.
@@ -605,26 +765,37 @@ local function load_reference(bufnr, handler, prefix, key, overwrite)
             return
         end
 
-        local rendered = fields.render(handler.fields, obj)
-
-        if draft.enabled() then
-            local wrote, write_err = draft.write(ref, rendered)
-            if not wrote then
-                set_lines(bufnr, {}, false)
-                notify.err(write_err)
+        -- One more round trip before render() can run: the `projects`
+        -- attachment above is bare PHIDs, and read_projects needs the
+        -- hashtags they resolve to (see resolve_projects). Chained rather
+        -- than fetched alongside, so a Projects-free object (no PHIDs to
+        -- resolve) never pays for it.
+        resolve_projects(obj, function()
+            if not vim.api.nvim_buf_is_valid(bufnr) then
                 return
             end
-            redirect_to_draft(bufnr, ref, overwrite)
-            return
-        end
 
-        vim.bo[bufnr].filetype = handler.filetype
-        set_lines(bufnr, rendered, true)
-        vim.b[bufnr].arcanist_loaded = {
-            ref = ref,
-            values = fields.raw_values(handler.fields, obj),
-        }
-        vim.api.nvim_exec_autocmds('BufReadPost', { buffer = bufnr })
+            local rendered = fields.render(handler.fields, obj)
+
+            if draft.enabled() then
+                local wrote, write_err = draft.write(ref, rendered)
+                if not wrote then
+                    set_lines(bufnr, {}, false)
+                    notify.err(write_err)
+                    return
+                end
+                redirect_to_draft(bufnr, ref, overwrite)
+                return
+            end
+
+            vim.bo[bufnr].filetype = handler.filetype
+            set_lines(bufnr, rendered, true)
+            vim.b[bufnr].arcanist_loaded = {
+                ref = ref,
+                values = fields.raw_values(handler.fields, obj),
+            }
+            vim.api.nvim_exec_autocmds('BufReadPost', { buffer = bufnr })
+        end)
     end)
 end
 
@@ -816,7 +987,12 @@ local function push(bufnr, handler, prefix, key, lines, force)
 
     -- Skipped entirely with `force` (":w!"/":ArcWrite!") -- the round-trip
     -- exists to catch a conflict, and force means overwrite regardless of
-    -- one, so there's nothing to check for.
+    -- one, so there's nothing to check for. `fresh_obj` is kept around
+    -- (rather than let go once the drift check is done with it): it's
+    -- handed to `build_edit_calls` below, which for some handlers (Wiki)
+    -- would otherwise have to re-fetch the very same object just to read
+    -- something off it (see HANDLERS.W).
+    local fresh_obj
     if baseline and not force then
         local obj, err = fetch_sync(handler, key)
         if err then
@@ -827,6 +1003,7 @@ local function push(bufnr, handler, prefix, key, lines, force)
             notify.err(string.format('%s no longer exists', ref_name))
             return false
         end
+        fresh_obj = obj
         -- Compared field by field rather than by dateModified, which has
         -- one-second resolution and moves for a write that changed nothing.
         -- Fields with no `write` are left out: a write cannot reach them, so
@@ -859,11 +1036,18 @@ local function push(bufnr, handler, prefix, key, lines, force)
         end
     end
 
-    local ok, _, err =
-        conduit.call_sync(handler.edit, handler.build_edit_params(key, transactions), config.conduit_timeout)
-    if not ok then
-        notify.err(string.format('failed to update %s: %s', ref_name, err))
+    local calls, calls_err = handler.build_edit_calls(key, transactions, fresh_obj)
+    if not calls then
+        notify.err(string.format('failed to update %s: %s', ref_name, calls_err))
         return false
+    end
+
+    for _, call in ipairs(calls) do
+        local ok, _, err = conduit.call_sync(call.method, call.params, config.conduit_timeout)
+        if not ok then
+            notify.err(string.format('failed to update %s: %s', ref_name, err))
+            return false
+        end
     end
 
     if not baseline then

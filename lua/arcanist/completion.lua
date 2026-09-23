@@ -33,17 +33,16 @@ local QUERY_DELAY_MS = 125
 -- node once inserted, so they double as both "how much of the sigil's
 -- typed text counts as the query" and "which candidates are even safe to
 -- offer". Mentions are PhabricatorMentionRemarkupRule's explicit
--- username charset; hashtags are ProjectRemarkupRule's *negative* set
--- (anything but whitespace and `?!,:;{}#()"'*/~`, no edge "."), so
--- "#c++" and "#v1.0" query and complete fine. Real slugs outside even
--- that set (e.g. containing "/") are filtered out rather than offered
--- and then not highlighted. Both patterns capture the sigil's byte
--- position for the word-boundary check below.
+-- username charset; hashtags share `fields.HASHTAG_CHAR` (ProjectRemarkupRule's
+-- own charset -- see that module for why arcanist.fields, not here, is its
+-- source of truth), so "#c++" and "#v1.0" query and complete fine. Real
+-- slugs outside even that set (e.g. containing "/") are filtered out
+-- rather than offered and then not highlighted. Both patterns capture the
+-- sigil's byte position for the word-boundary check below.
 local MENTION_QUERY = '()@([A-Za-z0-9_.%-]*)$'
 local MENTION_WORD = '^[A-Za-z0-9_.%-]*[A-Za-z0-9_%-]$'
-local HASHTAG_CHAR = '[^%s?!,:;{}#()"\'*/~]'
-local HASHTAG_QUERY = '()#(' .. HASHTAG_CHAR .. '*)$'
-local HASHTAG_WORD = '^' .. HASHTAG_CHAR .. '+$'
+local HASHTAG_QUERY = '()#(' .. fields.HASHTAG_CHAR .. '*)$'
+local HASHTAG_WORD = '^' .. fields.HASHTAG_CHAR .. '+$'
 
 --- @type { sigil: string, pattern: string }[]
 local SIGILS = {

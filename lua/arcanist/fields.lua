@@ -28,9 +28,19 @@
 -- only moves via accept/reject/abandon, never a settable value) is left
 -- out of the field list rather than shown and then rejected.
 
+local conduit = require('arcanist.conduit')
 local source = require('arcanist.source')
 
 local M = {}
+
+--- A hashtag's charset, sitting inside a "#..." token -- ProjectRemarkupRule's
+--- own *negative* set (anything but whitespace and `?!,:;{}#()"'*/~`, no edge
+--- "."), so "#c++" and "#v1.0" both parse whole. Shared with
+--- arcanist.completion, which matches the same charset while a hashtag is
+--- still being typed -- kept here (rather than duplicated there) since a
+--- Projects field's own write path (M.project_list, below) needs it first,
+--- to pull finished "#tag" tokens back out of committed buffer text.
+M.HASHTAG_CHAR = '[^%s?!,:;{}#()"\'*/~]'
 
 --- Split a remarkup blob into buffer lines. `plain = true` so literal `%`
 --- etc. in the text isn't treated as a Lua pattern.
@@ -149,13 +159,97 @@ function M.value_source(spec)
     }
 end
 
+--- Every whole "#tag" token in `raw`, in order, tags without their
+--- leading "#". The same charset arcanist.completion offers, so anything
+--- this plugin would ever insert as a hashtag parses back out again.
+--- @param raw string
+--- @return string[]
+local function hashtags(raw)
+    local tags = {}
+    for tag in raw:gmatch('#(' .. M.HASHTAG_CHAR .. '+)') do
+        table.insert(tags, tag)
+    end
+    return tags
+end
+
+--- Build a `write` for a Projects field: the raw line holds zero or more
+--- "#tag" tokens -- Phorge's own #project syntax, which
+--- `arcanist.completion` already completes anywhere in a remarkup buffer
+--- (including this field's own line, since its sigil-triggered completion
+--- runs before any field-specific one is even considered) -- so this write
+--- needs no `complete` of its own.
+---
+--- `write_value` resolves every tag in one `project.search` lookup rather
+--- than one per tag. `response.maps.slugMap` is Conduit's own answer to
+--- "what did each of these slugs resolve to" -- keyed by the exact spelling
+--- queried (so it works case-insensitively without this code lowercasing
+--- anything itself) and simply absent for a tag that matched no project,
+--- which is what turns into the "no such project" error below.
+--- @return arcanist.Write
+function M.project_list()
+    --- Both edits of a Projects field, reduced to a form that only differs
+    --- when the *set* of tags genuinely differs -- so re-ordering them, or
+    --- retyping one in different case, isn't a change to send.
+    --- @param raw string
+    --- @return string
+    local function canonical(raw)
+        local seen, unique = {}, {}
+        for _, tag in ipairs(hashtags(raw)) do
+            local lower = tag:lower()
+            if not seen[lower] then
+                seen[lower] = true
+                table.insert(unique, lower)
+            end
+        end
+        table.sort(unique)
+        return table.concat(unique, ' ')
+    end
+
+    return {
+        write_value = function(raw)
+            local tags = hashtags(raw)
+            if #tags == 0 then
+                return {}
+            end
+
+            local timeout = require('arcanist').config.conduit_timeout
+            local ok, response, err =
+                conduit.call_sync('project.search', { constraints = { slugs = tags } }, timeout)
+            if not ok then
+                return nil, string.format('failed to resolve projects: %s', err)
+            end
+
+            local slug_map = vim.tbl_get(response, 'maps', 'slugMap') or {}
+            local phids, seen, missing = {}, {}, {}
+            for _, tag in ipairs(tags) do
+                local hit = slug_map[tag]
+                if not hit then
+                    table.insert(missing, '#' .. tag)
+                elseif not seen[hit.projectPHID] then
+                    seen[hit.projectPHID] = true
+                    table.insert(phids, hit.projectPHID)
+                end
+            end
+            if #missing > 0 then
+                return nil, string.format('no such project: %s', table.concat(missing, ', '))
+            end
+            return phids
+        end,
+        changed = function(loaded, raw)
+            return loaded == nil or canonical(loaded) ~= canonical(raw)
+        end,
+    }
+end
+
 --- Build `fields` into buffer lines from a fetched object.
 ---
 --- Blank-line placement is derived rather than spelled out per field list:
 --- a run of consecutive 'line' fields stays tight ("Status:" directly
---- above "Priority:"), while blocks and the title are always separated
---- from whatever follows. That keeps the layout consistent for any future
---- field list without adding another rule per handler.
+--- above "Priority:"), while blocks, the title, and any field marked
+--- `separate = true` (the identity trailer every handler ends with -- see
+--- reference.lua) are always separated from whatever precedes/follows
+--- them. That keeps the layout consistent for any future field list
+--- without adding another rule per handler.
 --- @param fields table[]
 --- @param obj table
 --- @return string[]
@@ -166,7 +260,7 @@ function M.render(fields, obj)
     for i, field in ipairs(fields) do
         if i > 1 then
             local prev = fields[i - 1]
-            if field.kind == 'block' or prev.kind == 'block' or prev.kind == 'title' then
+            if field.kind == 'block' or prev.kind == 'block' or prev.kind == 'title' or field.separate then
                 table.insert(lines, '')
             end
         end
@@ -216,12 +310,12 @@ end
 function M.parse(fields, lines)
     local title_key
     local block_labels = {} -- exact "Label:" line -> field
-    local line_prefixes = {} -- "Label: " prefix -> field
+    local line_prefixes = {} -- "Label:" prefix (no trailing space) -> field
     for _, field in ipairs(fields) do
         if field.kind == 'title' then
             title_key = field.key
         elseif field.kind == 'line' then
-            line_prefixes[field.label .. ': '] = field
+            line_prefixes[field.label .. ':'] = field
         else
             block_labels[field.label .. ':'] = field
         end
@@ -245,8 +339,16 @@ function M.parse(fields, lines)
         local field, line_value = block_labels[trimmed], nil
         if not field then
             for prefix, candidate in pairs(line_prefixes) do
-                if trimmed:sub(1, #prefix) == prefix then
-                    field, line_value = candidate, vim.trim(trimmed:sub(#prefix + 1))
+                -- A bare "Label:" (no value at all -- an empty field, once
+                -- trailing whitespace is trimmed off the rendered "Label: ")
+                -- matches too; anything else needs at least the space that
+                -- always separates the label from a real value, so
+                -- "Foo:bar" prose with no such field still falls through.
+                if trimmed == prefix then
+                    field, line_value = candidate, ''
+                    break
+                elseif trimmed:sub(1, #prefix + 1) == prefix .. ' ' then
+                    field, line_value = candidate, vim.trim(trimmed:sub(#prefix + 2))
                     break
                 end
             end
