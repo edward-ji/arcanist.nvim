@@ -146,6 +146,17 @@ local function monogram_handler(letter)
     }
 end
 
+--- A wiki slug as Phorge stores it: trimmed, duplicate `/`s collapsed, no
+--- leading `/`, exactly one trailing `/`. `phriction.document.search`'s
+--- `paths` constraint matches this raw and unnormalized, unlike
+--- `phriction.edit`'s `slug` param, which the server normalizes itself.
+--- @param target string
+--- @return string slug
+local function normalize_slug(target)
+    local slug = vim.trim(target):gsub('/+', '/'):gsub('^/', ''):gsub('/*$', '')
+    return slug .. '/'
+end
+
 --- @type table<string, arcanist.Handler>
 local HANDLERS = {
     T = vim.tbl_extend('force', monogram_handler('T'), {
@@ -267,8 +278,12 @@ local HANDLERS = {
         format = function(key)
             return 'w/' .. key
         end,
+        -- Normalized (see normalize_slug above): every entry point (gf,
+        -- :ArcWrite, push()'s own is_own/identity checks) sees the same
+        -- canonical key regardless of how the ref-string was spelled.
         parse = function(ref_str)
-            return ref_str:match('^w/(.*)$')
+            local slug = ref_str:match('^w/(.*)$')
+            return slug and normalize_slug(slug)
         end,
         key_of = function(obj)
             return obj.fields.path
@@ -727,7 +742,12 @@ local function push(bufnr, handler, prefix, key, lines, force)
     -- Whether it carries a record of the object as loaded (`baseline`)
     -- decides what gets sent and whether a conflict is checked for. A copy
     -- saved out with ":sav" answers no to the first and yes to the second.
-    local is_own = vim.api.nvim_buf_get_name(bufnr) == ('arcanist://' .. ref_name)
+    --
+    -- Compared via `parse_uri` (both sides run through `handler.parse`)
+    -- rather than raw name equality, since a buffer's literal name is never
+    -- rewritten to its canonical form (see HANDLERS.W's `parse`).
+    local buf_prefix, buf_key = parse_uri(vim.api.nvim_buf_get_name(bufnr))
+    local is_own = buf_prefix == prefix and buf_key == key
     local loaded = vim.b[bufnr].arcanist_loaded
     local baseline = loaded and loaded.ref == ref_name and loaded or nil
 
@@ -1223,19 +1243,6 @@ local function resolve_relative(target, base)
         end
     end
     return table.concat(parts, '/') .. '/'
-end
-
---- A non-relative wiki_link `target` as a slug: trimmed, with duplicate
---- `/`s collapsed, no leading `/`, exactly one trailing `/`. Deliberately
---- not a full reimplementation of Phorge's own `PhabricatorSlug::normalize`
---- (case-folding, character banning) -- the server does that when
---- `phriction.document.search` runs, and a real mismatch just surfaces as
---- "not found" like any other 404.
---- @param target string
---- @return string slug
-local function normalize_slug(target)
-    local slug = vim.trim(target):gsub('/+', '/'):gsub('^/', ''):gsub('/*$', '')
-    return slug .. '/'
 end
 
 --- The slug `bufnr` is itself loaded as, if it names one -- the base a

@@ -477,4 +477,37 @@ T['gf on a wiki link opens it as an arcanist:// buffer'] = function()
     eq(child.lua_get('vim.b[0].arcanist_loaded ~= nil'), true)
 end
 
+T['opening a wiki slug without its trailing slash still resolves and writes'] = function()
+    -- Regression test: `phriction.document.search`'s `paths` constraint
+    -- does a raw, unnormalized match against the stored (always-slashed)
+    -- slug column (unlike `phriction.edit`'s `slug` param, which the server
+    -- normalizes itself) -- so ":e arcanist://w/some/slug", typed without
+    -- the trailing "/", used to 404 rather than resolve. HANDLERS.W's
+    -- `parse` now normalizes it first.
+    helpers.fixture(dir, 'call-conduit phriction.document.search', {
+        __sequence = {
+            wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding', content = 'Welcome.' }),
+            wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding', content = 'Welcome.' }),
+        },
+    })
+    helpers.fixture(dir, 'call-conduit phriction.edit', { slug = 'engineering/onboarding/' })
+
+    child.cmd('edit arcanist://w/engineering/onboarding')
+    wait_until('vim.b[0].arcanist_loaded ~= nil')
+
+    local searches = calls('call-conduit phriction.document.search')
+    eq(searches[1].params.constraints.paths, { 'engineering/onboarding/' })
+
+    child.lua([[vim.api.nvim_buf_set_lines(0, 0, 1, false, {'Onboarding (edited)'})]])
+    child.cmd('write')
+
+    -- is_own recognized the buffer as its own object (see push()) despite
+    -- the name it was opened under lacking the trailing slash, so 'modified'
+    -- actually clears.
+    eq(child.lua_get('vim.bo.modified'), false)
+    local edits = calls('call-conduit phriction.edit')
+    eq(#edits, 1)
+    eq(edits[1].params.slug, 'engineering/onboarding/')
+end
+
 return T
