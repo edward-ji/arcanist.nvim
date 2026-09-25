@@ -111,8 +111,8 @@ elseif subcommand == 'lint' then
     -- For a usage error or a deliberately slow run (to test qf.lua's
     -- "already running"/cancel-and-replace logic), fixture a table
     -- instead: {stdout=?, stderr=?, exit_code=?, delay_ms=?}.
-    log_call('lint', nil)
     local response = next_response('lint')
+    log_call('lint', nil)
     if type(response) == 'table' then
         if response.delay_ms then
             -- vim.wait() (not vim.uv.sleep(), a hard blocking C sleep) pumps
