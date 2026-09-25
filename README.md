@@ -1,5 +1,10 @@
 # arcanist.nvim
 
+[![Test](https://github.com/edward-ji/arcanist.nvim/actions/workflows/test.yml/badge.svg)](https://github.com/edward-ji/arcanist.nvim/actions/workflows/test.yml)
+[![Neovim](https://img.shields.io/badge/Neovim-0.11%2B-57A143?logo=neovim&logoColor=white)](https://neovim.io)
+[![License](https://img.shields.io/github/license/edward-ji/arcanist.nvim)](LICENSE)
+[![Phorge](https://img.shields.io/badge/Phorge-Arcanist-4a5f88)](https://we.phorge.it/book/phorge/article/arcanist/)
+
 A Neovim plugin for [Arcanist], a command-line interface to Phorge.
 
 Edit Phorge tasks and revisions as buffers (`:e arcanist://T123`), browse them
