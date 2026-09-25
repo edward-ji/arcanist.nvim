@@ -21,7 +21,10 @@ function Helpers.new_child()
     local child = MiniTest.new_child_neovim()
 
     function child.setup()
-        child.dir = vim.fn.tempname()
+        -- Resolved, because Neovim names a buffer by the file's resolved path
+        -- and macOS reaches the temp dir through "/var" -> "/private/var": a
+        -- path built from `child.dir` has to match those names.
+        child.dir = vim.fn.resolve(vim.fn.tempname())
         vim.fn.mkdir(child.dir, 'p')
 
         if not vim.startswith(vim.env.PATH, FIXTURES_BIN .. ':') then

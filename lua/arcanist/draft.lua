@@ -22,9 +22,22 @@ function M.enabled()
     return config().enabled
 end
 
+--- `~`, `//` and symlinks resolved. Neovim names a buffer by the file's
+--- resolved path, so whatever is compared against one -- `path`, and the
+--- `register_filetype` pattern that has to match it -- must be resolved too.
+--- (macOS reaches the per-user temp dir through "/var" -> "/private/var".)
+--- @param path string
+--- @return string
+local function resolved(path)
+    -- `resolve` expands neither "~" nor "$VAR", but needs nothing after it: it
+    -- already simplifies, and resolves whatever prefix of a not-yet-created
+    -- path does exist.
+    return vim.fn.resolve(vim.fs.normalize(path))
+end
+
 --- The on-disk path a draft for `ref` ("T123", "w/some/slug/") lives at.
---- Normalized (`~` and `//` resolved) so it compares equal to the name
---- Neovim gives the buffer after `:edit`.
+--- Normalized (`~`, `//` and symlinks resolved -- see `resolved`) so it
+--- compares equal to the name Neovim gives the buffer after `:edit`.
 ---
 --- A hierarchical ref -- one with a "/" in it, which only a wiki slug's ever
 --- has -- becomes real nested directories for every segment but the last,
@@ -56,7 +69,7 @@ function M.path(ref)
     if #segments > 1 then
         segments[#segments] = segments[#segments] .. '#'
     end
-    return vim.fs.normalize(vim.fs.joinpath(config().dir, table.concat(segments, '/')))
+    return resolved(vim.fs.joinpath(config().dir, table.concat(segments, '/')))
 end
 
 --- Register a filetype rule so every file under the drafts directory opens as
@@ -66,7 +79,7 @@ end
 --- `setup()` when drafts are enabled.
 function M.register_filetype()
     vim.filetype.add({
-        pattern = { [vim.pesc(vim.fs.normalize(config().dir)) .. '/.*'] = 'remarkup' },
+        pattern = { [vim.pesc(resolved(config().dir)) .. '/.*'] = 'remarkup' },
     })
 end
 
