@@ -31,6 +31,11 @@ $(PARSER_SO): $(GRAMMAR_DIR)/src/parser.c
 clean:
 	rm -f $(PARSER_SO)
 
+# Runs every tests/<dir>/**/test_*.lua under mini.test, from a Neovim
+# bootstrapped by tests/init.lua.
+run_tests = nvim --headless --noplugin -u tests/init.lua \
+	-c "lua MiniTest.run({ collect = { find_files = function() return vim.fn.globpath('$(1)', '**/test_*.lua', true, true) end } })"
+
 # Runs the whole Lua test suite (both tiers below).
 test: test-unit test-integration
 
@@ -38,13 +43,11 @@ test: test-unit test-integration
 # these never touch vim.treesitter, so they don't need the parser built
 # first, or a C compiler on $PATH at all.
 test-unit:
-	nvim --headless --noplugin -u scripts/minimal_init.lua \
-		-c "lua MiniTest.run({ collect = { find_files = function() return vim.fn.globpath('tests/unit', '**/test_*.lua', true, true) end } })"
+	$(call run_tests,tests/unit)
 
 # Drives a real (child) Neovim process through arcanist.nvim's actual UI --
 # buffers, keymaps, quickfix -- against a fake `arc` (tests/integration/fixtures/),
 # so no real Phorge/network is involved. Needs the built parser, since these
 # open real remarkup/arcanist:// buffers.
 test-integration: all
-	nvim --headless --noplugin -u scripts/minimal_init.lua \
-		-c "lua MiniTest.run({ collect = { find_files = function() return vim.fn.globpath('tests/integration', '**/test_*.lua', true, true) end } })"
+	$(call run_tests,tests/integration)
