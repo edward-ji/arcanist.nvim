@@ -1,0 +1,24 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        nvim: ["0.11", stable, nightly]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+        with:
+          cache: false
+          mise_toml: |
+            [tools]
+            neovim = "${{ matrix.nvim }}"
+      - run: make test
