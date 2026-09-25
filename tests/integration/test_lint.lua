@@ -81,6 +81,7 @@ T[':ArcLint! cancels an in-flight run and starts over'] = function()
     child.wait_until(function()
         return #child.calls('lint') > 0
     end)
+    eq(#child.calls('lint') > 0, true)
 
     child.fixture('lint', { stdout = second })
     child.cmd('ArcLint!')
