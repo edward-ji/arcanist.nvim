@@ -17,10 +17,10 @@ end
 
 local function check_nvim()
     health.start('Neovim')
-    if vim.fn.has('nvim-0.10') == 1 then
+    if vim.fn.has('nvim-0.11') == 1 then
         health.ok('version ' .. tostring(vim.version()))
     else
-        health.error('arcanist.nvim requires Neovim 0.10 or newer')
+        health.error('arcanist.nvim requires Neovim 0.11 or newer')
     end
 end
 

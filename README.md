@@ -10,7 +10,7 @@ upload on paste.
 
 ## Requirements
 
-- Neovim 0.10+.
+- Neovim 0.11+.
 - A C compiler (`cc`) on your `PATH`, to build the parser.
 - [`arc`](https://we.phorge.it/book/phorge/article/arcanist/) on your `PATH`,
   configured (`~/.arcrc`) against your Phorge instance.
