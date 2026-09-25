@@ -77,10 +77,10 @@ Once installed, run inside Neovim:
 make test
 ```
 
-Runs the Lua test suite under `tests/` via [mini.test], cloning it into
-`deps/` on first run.
+Runs the Lua test suite under `tests/` via [mini.test], cloning a pinned
+version of it into `deps/` on first run.
 
-[mini.test]: https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-test.md
+[mini.test]: https://github.com/nvim-mini/mini.test
 
 ## Rebuilding the grammar
 

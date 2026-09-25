@@ -1,15 +1,22 @@
--- Bootstraps a plain Neovim instance for `make test`: clones mini.test's
--- home (mini.nvim) into deps/ on first run, then puts it and this repo's
--- lua/ on the runtimepath. Deliberately independent of any user config
+-- Bootstraps a plain Neovim instance for `make test`: clones a pinned
+-- mini.test into deps/ on first run, then puts it and this repo's lua/ on
+-- the runtimepath. Deliberately independent of any user config
 -- (`nvim --noplugin -u` this file) so tests run the same everywhere.
 
-local mini_path = vim.fn.getcwd() .. '/deps/mini.nvim'
+-- The version is part of the clone's path, so bumping it clones afresh
+-- rather than silently reusing an older checkout.
+local MINI_TEST_VERSION = 'v0.18.0'
+
+local mini_path = vim.fn.getcwd() .. '/deps/mini.test-' .. MINI_TEST_VERSION
 if not vim.uv.fs_stat(mini_path) then
     vim.fn.system({
         'git',
         'clone',
-        '--filter=blob:none',
-        'https://github.com/echasnovski/mini.nvim',
+        '--depth',
+        '1',
+        '--branch',
+        MINI_TEST_VERSION,
+        'https://github.com/nvim-mini/mini.test',
         mini_path,
     })
 end
