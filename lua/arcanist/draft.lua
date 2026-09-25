@@ -104,8 +104,11 @@ end
 function M.write(ref, lines)
     local file = M.path(ref)
     local file_dir = vim.fn.fnamemodify(file, ':h')
+    -- Two `arcanist://` buffers can open at once, and `mkdir(..., 'p')` throws
+    -- E739 if the directory appears between its own check and mkdir(2) -- so a
+    -- lost race reads as success, and only a missing directory as failure.
     local mk_ok, mk_err = pcall(vim.fn.mkdir, file_dir, 'p')
-    if not mk_ok then
+    if not mk_ok and not vim.uv.fs_stat(file_dir) then
         return nil, string.format('could not create draft directory %s: %s', file_dir, mk_err)
     end
 

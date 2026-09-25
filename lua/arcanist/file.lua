@@ -181,8 +181,14 @@ function M.fetch(monogram, opts, cb)
             )
         end
 
+        -- Inline preview fetches every reference at once, so two downloads can
+        -- be creating CACHE concurrently and `mkdir(..., 'p')` throws E739 if
+        -- the directory appears between its own check and mkdir(2).
         local dir = vim.fs.joinpath(CACHE, 'F' .. id)
-        vim.fn.mkdir(dir, 'p')
+        local mk_ok, mk_err = pcall(vim.fn.mkdir, dir, 'p')
+        if not mk_ok and not vim.uv.fs_stat(dir) then
+            return fail(string.format('could not create cache directory %s: %s', dir, mk_err))
+        end
         local dest = vim.fs.joinpath(dir, name)
         local part = dest .. '.part'
         -- `arc download --as` refuses a path that already exists, so clear a

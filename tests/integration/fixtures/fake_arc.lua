@@ -15,7 +15,15 @@
 -- be a JSON array (e.g. `arc upload`'s) is never misread as a sequence.
 
 local dir = assert(os.getenv('ARC_FAKE_DIR'), 'fake arc: $ARC_FAKE_DIR is not set')
-vim.fn.mkdir(dir .. '/.calls', 'p')
+
+-- Several fake arcs run at once (inline preview fetches every reference in
+-- parallel), and `mkdir(..., 'p')` throws E739 if the directory appears
+-- between its own check and mkdir(2) -- which would fail the call for nothing.
+local calls_dir = dir .. '/.calls'
+local mk_ok, mk_err = pcall(vim.fn.mkdir, calls_dir, 'p')
+if not mk_ok and not vim.uv.fs_stat(calls_dir) then
+    error(mk_err)
+end
 
 local function read_json(path)
     local f = io.open(path, 'r')
@@ -51,7 +59,7 @@ local function next_response(key)
 
     if type(entry) == 'table' and entry.__sequence ~= nil then
         local sequence = entry.__sequence
-        local counter_path = dir .. '/.calls/' .. key:gsub('[^%w%.]', '_')
+        local counter_path = calls_dir .. '/' .. key:gsub('[^%w%.]', '_')
         local f = io.open(counter_path, 'r')
         local count = f and tonumber(f:read('*a')) or 0
         if f then
