@@ -9,34 +9,21 @@ local helpers = dofile('tests/integration/helpers.lua')
 
 local eq = MiniTest.expect.equality
 
-local child, dir
+local child = helpers.new_child()
 
 local T = MiniTest.new_set({
     hooks = {
         pre_case = function()
-            child, dir = helpers.new_child()
-            helpers.capture_notify(child)
+            child.setup()
+            child.capture_notify()
             -- file.lua's cache dir is computed once from stdpath('cache') at
             -- first require -- redirect it before that first require so the
             -- "render" cases (which download) never touch the real cache.
-            child.lua(string.format([[vim.env.XDG_CACHE_HOME = %q]], dir .. '/xdg-cache'))
+            child.lua(string.format([[vim.env.XDG_CACHE_HOME = %q]], child.dir .. '/xdg-cache'))
         end,
-        post_case = function()
-            helpers.stop(child, dir)
-        end,
+        post_case = child.teardown,
     },
 })
-
---- A `file.search`-shaped envelope for one file.
---- @param opts { name: string, size: integer, alt: string? }
---- @return table
-local function file_response(opts)
-    return {
-        data = {
-            { fields = { name = opts.name, size = opts.size, alt = opts.alt and { default = opts.alt } } },
-        },
-    }
-end
 
 --- Every extmark (with details) in the "arcanist.inline.text" namespace.
 --- @return table[]
@@ -62,16 +49,9 @@ local function wait_for_marks(min)
     ))
 end
 
---- Block until `condition_expr` (evaluated inside the child) is true, or
---- 2s pass.
---- @param condition_expr string
-local function wait_until(condition_expr)
-    child.lua(string.format('vim.wait(2000, function() return %s end, 10)', condition_expr))
-end
-
 T['a {F123} reference is concealed and shows Phorge\'s description'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} for details.' })
@@ -92,7 +72,7 @@ end
 
 T['a reference to a missing file draws nothing'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', { data = {} })
+    child.fixture('call-conduit file.search', { data = {} })
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F404} for details.' })
@@ -104,7 +84,7 @@ end
 
 T['inline preview can be toggled per buffer via enable/disable/toggle'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} for details.' })
@@ -126,7 +106,7 @@ end
 
 T['typing a new reference live-adds a placement'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
 
     child.cmd('enew')
     child.lua([[vim.bo.filetype = 'remarkup']])
@@ -141,7 +121,7 @@ end
 
 T['deleting a reference live-removes its placement'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { '{F123}' })
@@ -157,7 +137,7 @@ end
 
 T['the same file referenced twice gets two independent placements'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} and also {F123} again.' })
@@ -169,7 +149,7 @@ end
 
 T['moving the cursor onto a concealed monogram hides its description, and away shows it'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} for details.' })
@@ -212,13 +192,13 @@ T['a custom render function receives the downloaded file, closed on disable'] = 
             },
         })
     ]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500 }))
-    helpers.fixture(dir, 'download', { bytes = 'PNGDATA' })
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500 }))
+    child.fixture('download', { bytes = 'PNGDATA' })
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} for details.' })
     child.lua([[vim.bo.filetype = 'remarkup']])
-    wait_until('#_G.__render_specs > 0')
+    child.wait_until('#_G.__render_specs > 0')
 
     local specs = child.lua_get('_G.__render_specs')
     eq(#specs, 1)
@@ -239,14 +219,14 @@ T['an unknown file.inline.render preset name reports a clear error'] = function(
     child.lua([[vim.bo.filetype = 'remarkup']])
     child.lua([[vim.wait(500)]])
 
-    local log = helpers.notifications(child)
+    local log = child.notifications()
     eq(log[#log].msg, 'arcanist.nvim: file.inline.render: unknown preset "not-a-real-preset"')
 end
 
 T['render = "snacks" without snacks.nvim warns once, not once per reference'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { render = 'snacks' } } })]])
-    helpers.fixture(dir, 'call-conduit file.search', file_response({ name = 'duck.png', size = 1500 }))
-    helpers.fixture(dir, 'download', { bytes = 'PNGDATA' })
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500 }))
+    child.fixture('download', { bytes = 'PNGDATA' })
 
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} and {F456} for details.' })
@@ -255,7 +235,7 @@ T['render = "snacks" without snacks.nvim warns once, not once per reference'] = 
 
     local warnings = vim.tbl_filter(function(n)
         return n.msg:find('needs snacks.nvim', 1, true) ~= nil
-    end, helpers.notifications(child))
+    end, child.notifications())
     eq(#warnings, 1)
 end
 

@@ -8,16 +8,12 @@ local helpers = dofile('tests/integration/helpers.lua')
 
 local eq = MiniTest.expect.equality
 
-local child, dir
+local child = helpers.new_child()
 
 local T = MiniTest.new_set({
     hooks = {
-        pre_case = function()
-            child, dir = helpers.new_child()
-        end,
-        post_case = function()
-            helpers.stop(child, dir)
-        end,
+        pre_case = child.setup,
+        post_case = child.teardown,
     },
 })
 
@@ -51,7 +47,7 @@ local function run_checkhealth()
 end
 
 T[':checkhealth arcanist reports who user.whoami authenticates as'] = function()
-    helpers.fixture(dir, 'call-conduit user.whoami', { userName = 'alice', uri = 'https://phorge.example/api/' })
+    child.fixture('call-conduit user.whoami', { userName = 'alice', uri = 'https://phorge.example/api/' })
 
     local report = run_checkhealth()
 
@@ -60,7 +56,7 @@ end
 
 T['a whoami that outlives conduit_timeout is reported as unreachable'] = function()
     child.lua([[require('arcanist').setup({ conduit_timeout = 50 })]])
-    helpers.fixture(dir, 'call-conduit user.whoami', { __control = { delay_ms = 500 } })
+    child.fixture('call-conduit user.whoami', { __control = { delay_ms = 500 } })
 
     local report = run_checkhealth()
 
@@ -69,7 +65,7 @@ end
 
 T['file.open = "snacks" without snacks.nvim is reported unavailable'] = function()
     child.lua([[require('arcanist').setup({ file = { open = 'snacks' } })]])
-    helpers.fixture(dir, 'call-conduit user.whoami', { userName = 'alice' })
+    child.fixture('call-conduit user.whoami', { userName = 'alice' })
 
     local report = run_checkhealth()
 
@@ -78,7 +74,7 @@ end
 
 T['file.inline.render = "snacks" without snacks.nvim is reported unavailable'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { render = 'snacks' } } })]])
-    helpers.fixture(dir, 'call-conduit user.whoami', { userName = 'alice' })
+    child.fixture('call-conduit user.whoami', { userName = 'alice' })
 
     local report = run_checkhealth()
 
@@ -86,7 +82,7 @@ T['file.inline.render = "snacks" without snacks.nvim is reported unavailable'] =
 end
 
 T['drafts disabled (the default) is reported as such'] = function()
-    helpers.fixture(dir, 'call-conduit user.whoami', { userName = 'alice' })
+    child.fixture('call-conduit user.whoami', { userName = 'alice' })
 
     local report = run_checkhealth()
 
@@ -94,12 +90,12 @@ T['drafts disabled (the default) is reported as such'] = function()
 end
 
 T['a configured drafts.dir that does not exist yet is only a note'] = function()
-    local drafts_dir = dir .. '/not-yet-created'
+    local drafts_dir = child.dir .. '/not-yet-created'
     child.lua(string.format(
         [[require('arcanist').setup({ drafts = { enabled = true, dir = %q } })]],
         drafts_dir
     ))
-    helpers.fixture(dir, 'call-conduit user.whoami', { userName = 'alice' })
+    child.fixture('call-conduit user.whoami', { userName = 'alice' })
 
     local report = run_checkhealth()
 
@@ -107,13 +103,13 @@ T['a configured drafts.dir that does not exist yet is only a note'] = function()
 end
 
 T['an existing writable drafts.dir is reported ok'] = function()
-    local drafts_dir = dir .. '/drafts'
+    local drafts_dir = child.dir .. '/drafts'
     vim.fn.mkdir(drafts_dir, 'p')
     child.lua(string.format(
         [[require('arcanist').setup({ drafts = { enabled = true, dir = %q } })]],
         drafts_dir
     ))
-    helpers.fixture(dir, 'call-conduit user.whoami', { userName = 'alice' })
+    child.fixture('call-conduit user.whoami', { userName = 'alice' })
 
     local report = run_checkhealth()
 

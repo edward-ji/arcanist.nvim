@@ -6,42 +6,33 @@ local helpers = dofile('tests/integration/helpers.lua')
 
 local eq = MiniTest.expect.equality
 
-local child, dir
+local child = helpers.new_child()
 
 local T = MiniTest.new_set({
     hooks = {
         pre_case = function()
-            child, dir = helpers.new_child()
+            child.setup()
             child.lua([[_G.__result = nil]])
         end,
-        post_case = function()
-            helpers.stop(child, dir)
-        end,
+        post_case = child.teardown,
     },
 })
 
---- Block until `condition_expr` (evaluated inside the child) is true, or
---- 2s pass.
---- @param condition_expr string
-local function wait_until(condition_expr)
-    child.lua(string.format('vim.wait(2000, function() return %s end, 10)', condition_expr))
-end
-
 T['upload() succeeds and resolves the monogram'] = function()
-    helpers.fixture(dir, 'upload', { { id = 262 } })
+    child.fixture('upload', { { id = 262 } })
 
     child.lua([[
         require('arcanist.upload').upload('/tmp/duck.png', function(ok, result)
             _G.__result = { ok, result }
         end)
     ]])
-    wait_until('_G.__result ~= nil')
+    child.wait_until('_G.__result ~= nil')
 
     eq(child.lua_get('_G.__result'), { true, 'F262' })
 end
 
 T['upload() boils a multi-line failure down to one message'] = function()
-    helpers.fixture(dir, 'upload', {
+    child.fixture('upload', {
         __control = {
             exit_code = 1,
             stderr = 'EXCEPTION: (ArcanistUsageException) Could not upload file: no such file. '
@@ -55,7 +46,7 @@ T['upload() boils a multi-line failure down to one message'] = function()
             _G.__result = { ok, result }
         end)
     ]])
-    wait_until('_G.__result ~= nil')
+    child.wait_until('_G.__result ~= nil')
 
     eq(child.lua_get('_G.__result'), { false, 'Could not upload file: no such file.' })
     local log = child.lua_get('_G.__notify_log')
@@ -63,7 +54,7 @@ T['upload() boils a multi-line failure down to one message'] = function()
 end
 
 T['cancelling an upload stops its callback from firing'] = function()
-    helpers.fixture(dir, 'upload', { __control = { delay_ms = 1000, value = { { id = 1 } } } })
+    child.fixture('upload', { __control = { delay_ms = 1000, value = { { id = 1 } } } })
 
     child.lua([[
         _G.__cancel = require('arcanist.upload').upload('/tmp/slow.png', function(ok, result)

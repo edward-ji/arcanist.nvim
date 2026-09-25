@@ -6,23 +6,19 @@ local helpers = dofile('tests/integration/helpers.lua')
 
 local eq = MiniTest.expect.equality
 
-local child, dir
+local child = helpers.new_child()
 
 local T = MiniTest.new_set({
     hooks = {
-        pre_case = function()
-            child, dir = helpers.new_child()
-        end,
-        post_case = function()
-            helpers.stop(child, dir)
-        end,
+        pre_case = child.setup,
+        post_case = child.teardown,
     },
 })
 
 T["a 'gitcommit' buffer becomes remarkup when detect.gitcommit is on"] = function()
     child.lua([[require('arcanist').setup({ detect = { gitcommit = true } })]])
 
-    local work = dir .. '/work'
+    local work = child.dir .. '/work'
     vim.fn.mkdir(work, 'p')
     local arcconfig = assert(io.open(work .. '/.arcconfig', 'w'))
     arcconfig:write('{}')
@@ -38,7 +34,7 @@ T["a 'gitcommit' buffer becomes remarkup when detect.gitcommit is on"] = functio
 end
 
 T["a 'gitcommit' buffer stays put when detect.gitcommit is off (default)"] = function()
-    local work = dir .. '/work'
+    local work = child.dir .. '/work'
     vim.fn.mkdir(work, 'p')
     local arcconfig = assert(io.open(work .. '/.arcconfig', 'w'))
     arcconfig:write('{}')
@@ -57,7 +53,7 @@ T['a file with no name of its own is guessed by its trailing identity line'] = f
     -- detect.identity defaults to true -- no setup() call needed. The
     -- filename itself matches no rule at all (no extension, no known
     -- pattern), so only the content-sniffing catch-all can claim it.
-    local path = dir .. '/some-random-file'
+    local path = child.dir .. '/some-random-file'
     local f = assert(io.open(path, 'w'))
     f:write('Some title\n\nDescription text.\n\nManiphest Task: T5\n')
     f:close()
@@ -70,7 +66,7 @@ end
 T['content-based identity detection is skipped when detect.identity is off'] = function()
     child.lua([[require('arcanist').setup({ detect = { identity = false } })]])
 
-    local path = dir .. '/off-by-config'
+    local path = child.dir .. '/off-by-config'
     local f = assert(io.open(path, 'w'))
     f:write('Some title\n\nDescription text.\n\nManiphest Task: T5\n')
     f:close()
@@ -81,7 +77,7 @@ T['content-based identity detection is skipped when detect.identity is off'] = f
 end
 
 T['a file whose last line names no known object type is left alone'] = function()
-    local path = dir .. '/another-random-file'
+    local path = child.dir .. '/another-random-file'
     local f = assert(io.open(path, 'w'))
     f:write('Some title\n\nDescription text.\n\nMysterious Task: T5\n')
     f:close()

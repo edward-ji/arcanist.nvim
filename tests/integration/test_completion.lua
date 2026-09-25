@@ -8,16 +8,12 @@ local helpers = dofile('tests/integration/helpers.lua')
 
 local eq = MiniTest.expect.equality
 
-local child, dir
+local child = helpers.new_child()
 
 local T = MiniTest.new_set({
     hooks = {
-        pre_case = function()
-            child, dir = helpers.new_child()
-        end,
-        post_case = function()
-            helpers.stop(child, dir)
-        end,
+        pre_case = child.setup,
+        post_case = child.teardown,
     },
 })
 
@@ -51,7 +47,7 @@ local function items_at()
 end
 
 T['@mention completions use the default mention_kind'] = function()
-    helpers.fixture(dir, 'call-conduit user.search', {
+    child.fixture('call-conduit user.search', {
         data = { { fields = { username = 'lincoln', realName = 'Abraham Lincoln' } } },
     })
     open_with_line('@linc')
@@ -65,7 +61,7 @@ T['@mention completions use the default mention_kind'] = function()
 end
 
 T['#project completions use the default project_kind'] = function()
-    helpers.fixture(dir, 'call-conduit project.search', {
+    child.fixture('call-conduit project.search', {
         data = {
             {
                 fields = { name = 'Quality Assurance', status = 'active' },
@@ -86,10 +82,10 @@ T['a custom mention_kind/project_kind is reflected in each completion'] = functi
     child.lua([[require('arcanist').setup({
         completion = { mention_kind = 'Function', project_kind = 'Class' },
     })]])
-    helpers.fixture(dir, 'call-conduit user.search', {
+    child.fixture('call-conduit user.search', {
         data = { { fields = { username = 'lincoln', realName = 'Abraham Lincoln' } } },
     })
-    helpers.fixture(dir, 'call-conduit project.search', {
+    child.fixture('call-conduit project.search', {
         data = {
             {
                 fields = { name = 'Quality Assurance', status = 'active' },
