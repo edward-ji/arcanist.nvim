@@ -126,7 +126,7 @@ T['object not found on load'] = function()
     child.fixture('call-conduit maniphest.search', { data = {} })
 
     child.cmd('edit arcanist://T404')
-    child.lua([[vim.wait(500)]]) -- lets load_reference's async callback run
+    child.wait_for_notification('T404 not found')
 
     eq(child.lua_get('vim.b[0].arcanist_loaded == nil'), true)
     eq(last_notification(), 'arcanist.nvim: T404 not found')

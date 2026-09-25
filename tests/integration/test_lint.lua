@@ -36,7 +36,7 @@ T[':ArcLint with nothing to report'] = function()
 
     child.cmd('enew')
     child.cmd('ArcLint')
-    child.lua([[vim.wait(500)]])
+    child.wait_for_notification('nothing to report')
 
     eq(#messages_containing('nothing to report'), 1)
     eq(child.lua_get('vim.fn.getqflist()'), {})
@@ -47,7 +47,7 @@ T[':ArcLint on a usage error'] = function()
 
     child.cmd('enew')
     child.cmd('ArcLint')
-    child.lua([[vim.wait(500)]])
+    child.wait_for_notification('arc lint: bad argument')
 
     eq(#messages_containing('arcanist.nvim: arc lint: bad argument'), 1)
     eq(child.lua_get('vim.fn.getqflist()'), {})

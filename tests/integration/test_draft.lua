@@ -72,7 +72,6 @@ T[':ArcWrite from a draft buffer pushes to the server'] = function()
 
     child.type_keys('gg', 'A', ' (edited)', '<Esc>')
     child.cmd('ArcWrite')
-    child.lua([[vim.wait(300)]])
 
     local edits = child.calls('call-conduit differential.revision.edit')
     eq(#edits, 1)

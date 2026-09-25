@@ -81,7 +81,7 @@ T[':ArcFile refuses a file past max_bytes without a bang'] = function()
 
     child.cmd('enew')
     child.cmd('ArcFile F999')
-    child.lua([[vim.wait(300)]])
+    child.wait_for_notification('cap 25.0 MB')
 
     eq(#child.calls('download'), 0)
     local log = child.notifications()
@@ -97,7 +97,7 @@ T['an unknown file.open preset name reports a clear error'] = function()
 
     child.cmd('enew')
     child.cmd('ArcFile F123')
-    child.lua([[vim.wait(300)]])
+    child.wait_for_notification('unknown preset')
 
     local log = child.notifications()
     eq(log[#log].msg, 'arcanist.nvim: file.open: unknown preset "not-a-real-preset"')
@@ -110,7 +110,7 @@ T[':ArcFile reports a download failure and caches nothing'] = function()
 
     child.cmd('enew')
     child.cmd('ArcFile F7')
-    child.lua([[vim.wait(300)]])
+    child.wait_for_notification('Permission denied')
 
     -- Also notifies "loading F7 (ghost.bin, 10 B)..." first (M.fetch's own
     -- progress message) before the download itself fails.

@@ -118,6 +118,19 @@ function Helpers.new_child()
         return child.lua_get('_G.__notify_log') or {}
     end
 
+    --- Block until a captured message contains `substr`, or 2s pass.
+    --- @param substr string
+    function child.wait_for_notification(substr)
+        child.wait_until(function()
+            for _, entry in ipairs(child.notifications()) do
+                if entry.msg:find(substr, 1, true) then
+                    return true
+                end
+            end
+            return false
+        end)
+    end
+
     return child
 end
 

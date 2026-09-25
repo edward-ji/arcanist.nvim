@@ -130,7 +130,9 @@ T['deleting a reference live-removes its placement'] = function()
     eq(#text_extmarks(), 2)
 
     child.type_keys('0', 'D')
-    child.lua([[vim.wait(300)]])
+    child.wait_until(function()
+        return #text_extmarks() == 0
+    end)
 
     eq(#text_extmarks(), 0)
 end
@@ -217,7 +219,7 @@ T['an unknown file.inline.render preset name reports a clear error'] = function(
     child.cmd('enew')
     child.api.nvim_buf_set_lines(0, 0, -1, false, { 'See {F123} for details.' })
     child.lua([[vim.bo.filetype = 'remarkup']])
-    child.lua([[vim.wait(500)]])
+    child.wait_for_notification('unknown preset')
 
     local log = child.notifications()
     eq(log[#log].msg, 'arcanist.nvim: file.inline.render: unknown preset "not-a-real-preset"')
