@@ -158,8 +158,16 @@ elseif subcommand == 'download' then
         io.stderr:write(response.stderr or 'fake arc: download failed\n')
         os.exit(response.code or 1)
     end
+    -- Like the real `arc download --as`, refuse to overwrite a path.
+    if io.open(part, 'rb') then
+        io.stderr:write(string.format('fake arc: %s already exists\n', part))
+        os.exit(1)
+    end
     local out = assert(io.open(part, 'wb'))
     out:write(response.bytes or '')
+    if response.seconds then
+        os.execute('sleep ' .. response.seconds) -- a download that takes a while
+    end
     out:close()
     os.exit(0)
 else

@@ -211,6 +211,31 @@ T['a custom render function receives the downloaded file, closed on disable'] = 
     eq(child.lua_get('_G.__render_closed'), 1)
 end
 
+T['a screenshot embedded twice in a comment previews both times'] = function()
+    child.lua([[
+        _G.__previews = {}
+        require('arcanist').setup({
+            file = {
+                inline = {
+                    render = function(spec)
+                        table.insert(_G.__previews, spec.info.monogram)
+                        return { close = function() end }
+                    end,
+                },
+            },
+        })
+    ]])
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'screenshot.png', size = 1500 }))
+    child.fixture('download', { bytes = 'PNGDATA', seconds = 0.05 })
+
+    child.cmd('enew')
+    child.api.nvim_buf_set_lines(0, 0, -1, false, { 'Before: {F123}', '', 'Same screen after the fix: {F123}' })
+    child.lua([[vim.bo.filetype = 'remarkup']])
+    child.wait_until('#_G.__previews >= 2')
+
+    eq(child.lua_get('_G.__previews'), { 'F123', 'F123' })
+end
+
 T['an unknown file.inline.render preset name reports a clear error'] = function()
     -- resolve_render() bails before ever fetching a reference's file, so no
     -- file.search/download fixture is needed for this one to reach place().

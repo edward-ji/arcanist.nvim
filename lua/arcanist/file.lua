@@ -19,8 +19,10 @@ local M = {}
 --- directory per id keeps the real filename without a scheme of our own.
 local CACHE = vim.fs.joinpath(vim.fn.stdpath('cache'), 'arcanist', 'files')
 
---- Downloads still running, keyed by numeric id, so a second ":ArcFile" on a
---- file already loading is a no-op (mirrors arcanist.paste's `in_flight`).
+--- Fetches still running, keyed by numeric id, each the list of callbacks
+--- waiting on it: a second fetch of a file already loading joins the first
+--- instead of racing it for the same staging file.
+--- @type table<integer, fun(path: string?, info: arcanist.FileInfo?, err: string?)[]>
 local in_flight = {}
 
 --- The numeric id of a file monogram ("F123", "{F123}"), or nil for anything
@@ -122,7 +124,7 @@ end
 --- Fetch F<id> into the cache and call `cb` with the local path. No viewer --
 --- `preview()` adds that; a caller that only wants the file uses this
 --- directly. `cb` runs on the main loop, `(nil, nil, err)` on failure; a
---- fetch for a file already downloading is a silent no-op.
+--- fetch for a file already loading gets that fetch's result.
 --- @param monogram string  "F123" (also accepts "{F123}").
 --- @param opts? { force: boolean, quiet: boolean }  force: re-download past
 ---   the cache and ignore `config.file.max_bytes` (the ":ArcFile!" bang).
@@ -140,19 +142,21 @@ function M.fetch(monogram, opts, cb)
             notify.info(msg)
         end
     end
-    local function fail(msg)
+    local function report(msg)
         if not opts.quiet then
             notify.err(msg)
         end
-        return cb(nil, nil, msg)
     end
 
     local id = M.file_id(monogram)
     if not id then
-        return fail(string.format('%q is not a file monogram', tostring(monogram)))
+        local msg = string.format('%q is not a file monogram', tostring(monogram))
+        report(msg)
+        return cb(nil, nil, msg)
     end
     if in_flight[id] then
         progress(string.format('F%d is already loading', id))
+        table.insert(in_flight[id], cb)
         return
     end
     if not opts.force then
@@ -160,6 +164,19 @@ function M.fetch(monogram, opts, cb)
         if path then
             return cb(path, { monogram = 'F' .. id, name = name })
         end
+    end
+
+    local waiters = { cb }
+    in_flight[id] = waiters
+    local function done(path, info, err)
+        in_flight[id] = nil
+        for _, waiter in ipairs(waiters) do
+            waiter(path, info, err)
+        end
+    end
+    local function fail(msg)
+        report(msg)
+        return done(nil, nil, msg)
     end
 
     M.info(monogram, { quiet = true }, function(info, err)
@@ -200,12 +217,10 @@ function M.fetch(monogram, opts, cb)
 
         progress(string.format('loading F%d (%s, %s)...', id, name, bytes and human(bytes) or '?'))
 
-        in_flight[id] = true
         vim.system(
             { 'arc', 'download', '--as', part, '--', 'F' .. id },
             { text = true },
             vim.schedule_wrap(function(obj)
-                in_flight[id] = nil
                 if obj.code ~= 0 then
                     pcall(os.remove, part)
                     return fail(string.format('F%d: %s', id, arc_error(obj.stderr)))
@@ -217,7 +232,7 @@ function M.fetch(monogram, opts, cb)
                     pcall(os.remove, part)
                     return fail(string.format('F%d: %s', id, rename_err))
                 end
-                cb(dest, info)
+                done(dest, info)
             end)
         )
     end)
