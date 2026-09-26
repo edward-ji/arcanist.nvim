@@ -770,8 +770,11 @@ file.inline.render ~
 
     Return `{ close = function() ... end }` to have the placement torn down
     on reload or buffer wipe, or nil to leave that monogram as-is (a file
-    type you do not handle, say). `text` never downloads, so none of this
-    -- the cap, the quiet failure, the warning -- applies to it.
+    type you do not handle, say). The handle may also carry
+    `update = function(spec) ... end`, called instead of close-and-place
+    when a `:w` only changed that reference's embed options. `text` never
+    downloads, so none of this -- the cap, the quiet failure, the warning
+    -- applies to it.
 
     "snacks" sizes a placement from `spec.options`, the same as Phorge's web
     UI: "size=full"/"size=wide" render at full resolution (bounded by the

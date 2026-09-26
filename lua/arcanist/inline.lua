@@ -24,7 +24,8 @@
 -- with a `close`, or nil to leave the monogram as-is. A download is not
 -- something to redo on every keystroke, so `render` stays on the
 -- coarser, pre-existing cadence: buffer open, `:w`, and explicit
--- enable/disable/toggle. Quiet and bounded by `file.max_bytes`; `text` is
+-- enable/disable/toggle -- where `:w`, like `text`'s re-sync, only places
+-- added references and closes removed ones. Quiet and bounded by `file.max_bytes`; `text` is
 -- unaffected by it since it never downloads.
 --
 -- An embed's "{F123, size=full, width=200}" options (see arcanist.reference's
@@ -42,11 +43,10 @@ local M = {}
 --- Per-buffer state, keyed by bufnr.
 --- @class arcanist.InlineBufState
 --- @field override boolean? Explicit enable/disable (nil = follow `config.file.inline`).
---- @field gen integer Bumped on every `render` (re)render so a superseded
---- `file.fetch` callback bails.
---- @field handles arcanist.InlineHandle[]? `render`'s placements now on screen.
---- @field shown string[]? The sorted monogram list `handles` was built
---- from, so a `:w` that changed nothing can skip re-rendering `render`.
+--- @field gen integer Bumped on every scheduled `render`, so a superseded
+--- one collapses to just the last.
+--- @field placed arcanist.RenderState[]? `render`'s placements, one per
+--- reference occurrence, so a `:w` only adds or removes what changed.
 --- @field text_gen integer Bumped on every scheduled text re-sync, so a
 --- superseded one (several edits before its `vim.schedule` callback runs)
 --- collapses to just the last.
@@ -68,7 +68,7 @@ local function rec(buf)
     return r
 end
 
---- Debounce `fn(buf, g)` to the next tick, coalescing whatever calls land
+--- Debounce `fn(buf)` to the next tick, coalescing whatever calls land
 --- before then into one: `field` (`"gen"`/`"text_gen"`) is the per-buffer
 --- generation counter this bumps and later compares, so a call superseded
 --- by a newer one (another edit before `vim.schedule`'s callback runs, or
@@ -77,7 +77,7 @@ end
 --- different counter and target.
 --- @param buf integer
 --- @param field "gen"|"text_gen"
---- @param fn fun(buf: integer, g: integer)
+--- @param fn fun(buf: integer)
 local function schedule(buf, field, fn)
     local r = rec(buf)
     r[field] = r[field] + 1
@@ -85,9 +85,39 @@ local function schedule(buf, field, fn)
     vim.schedule(function()
         local r2 = bufs[buf]
         if r2 and r2[field] == g and vim.api.nvim_buf_is_valid(buf) then
-            fn(buf, g)
+            fn(buf)
         end
     end)
+end
+
+--- Mark and return the index of the first entry of `current` not yet in
+--- `claimed` that satisfies `pred`, or nil -- how a re-sync pairs what is
+--- already placed with the references now in the buffer.
+--- @generic T
+--- @param current T[]
+--- @param claimed table<integer, true>
+--- @param pred fun(c: T): boolean
+--- @return integer?
+local function claim(current, claimed, pred)
+    for i, c in ipairs(current) do
+        if not claimed[i] and pred(c) then
+            claimed[i] = true
+            return i
+        end
+    end
+end
+
+--- Remove the first entry of `list` (may be nil) that satisfies `pred`.
+--- @generic T
+--- @param list T[]?
+--- @param pred fun(e: T): boolean
+local function remove_where(list, pred)
+    for i, e in ipairs(list or {}) do
+        if pred(e) then
+            table.remove(list, i)
+            return
+        end
+    end
 end
 
 --- @param buf integer?
@@ -149,8 +179,10 @@ local function terminal_size()
     return ok and terminal.size() or nil
 end
 
---- `px` pixels, converted to terminal cells for `axis` ("w"/"h"), or nil if
---- the terminal's cell size isn't available.
+--- `px` CSS pixels, converted to terminal cells for `axis` ("w"/"h"), or nil
+--- if the terminal's cell size isn't available. Scaled by snacks' own HiDPI
+--- guess, the factor it sizes images by too: dividing by the physical cell
+--- size alone halves every cap on a 2x display.
 --- @param px number
 --- @param axis "w"|"h"
 --- @return integer?
@@ -160,7 +192,7 @@ local function px_to_cells(px, axis)
         return nil
     end
     local cell = axis == 'w' and size.cell_width or size.cell_height
-    return math.max(1, math.ceil(px / cell))
+    return math.max(1, math.ceil(px * (size.scale or 1) / cell))
 end
 
 --- A parsed dimension, in terminal cells for `axis` ("w"/"h"): a pixel value
@@ -216,6 +248,9 @@ local function sizing(options)
     }
 end
 
+--- Namespace for the "snacks" preset's anchor extmarks.
+local anchor_ns = vim.api.nvim_create_namespace('arcanist.inline.anchor')
+
 --- Bundled "snacks" renderer: `snacks.image.supports_file` decides whether the
 --- file can be drawn (unsupported -> left as text); the image anchors to the
 --- monogram and draws on the line below. Warns once if snacks.nvim is absent.
@@ -258,6 +293,30 @@ local function snacks_preset(spec)
 
     local size = sizing(spec.options)
 
+    -- snacks re-renders from `opts.range`/`opts.pos` on every resize or
+    -- window change, but never moves them itself -- its own markdown driver
+    -- re-feeds them on each buffer change. Without that, an edit above the
+    -- reference snaps the image back to its creation-time row. This mark
+    -- follows the monogram so `track` can re-feed them the same way.
+    local anchor = vim.api.nvim_buf_set_extmark(spec.buf, anchor_ns, sr, sc, {
+        end_row = er,
+        end_col = ec,
+        invalidate = true,
+        undo_restore = false,
+    })
+
+    --- Point `p` at the monogram's current position; false once its line is gone.
+    --- @return boolean
+    local function track(p)
+        local mark = vim.api.nvim_buf_get_extmark_by_id(spec.buf, anchor_ns, anchor, { details = true })
+        if not mark[1] or mark[3].invalid then
+            return false
+        end
+        p.opts.range = { mark[1] + 1, mark[2], mark[3].end_row + 1, mark[3].end_col }
+        p.opts.pos = { mark[1] + 1, mark[2] }
+        return true
+    end
+
     local placement = image.placement.new(spec.buf, spec.path, {
         range = { sr + 1, sc, er + 1, ec },
         pos = { sr + 1, sc },
@@ -265,11 +324,50 @@ local function snacks_preset(spec)
         auto_resize = true,
         max_width = size.max_width,
         max_height = size.max_height,
+        on_update_pre = track,
     })
+
+    local augroup = vim.api.nvim_create_augroup('arcanist.inline.snacks.' .. anchor, { clear = true })
+    local closed = false
+    local function close()
+        if closed then
+            return
+        end
+        closed = true
+        pcall(vim.api.nvim_del_augroup_by_id, augroup)
+        pcall(vim.api.nvim_buf_del_extmark, spec.buf, anchor_ns, anchor)
+        -- `placement:close()` deletes the image in the terminal straight away,
+        -- ahead of the redraw that clears its placeholder cells: one frame of
+        -- orphaned cells, a visible flicker. Drop the cells in this redraw
+        -- and close once it has been flushed.
+        for _, eid in ipairs(placement.eids) do
+            pcall(vim.api.nvim_buf_del_extmark, spec.buf, image.placement.ns, eid)
+        end
+        placement.eids = {}
+        vim.schedule(function()
+            -- snacks' own delete sends the wrong placement id, leaving this
+            -- one alive in the terminal while the image has other placements
+            -- -- and since Neovim never sends the placement id with the cells,
+            -- the terminal may then draw those with this one's stale size.
+            pcall(image.terminal.request, { a = 'd', d = 'i', i = placement.img.id, p = placement.id })
+            pcall(placement.close, placement)
+        end)
+    end
+    local handle = {
+        close = close,
+        -- Same placement id, new size: snacks re-sends it and rewrites its
+        -- extmarks in place, where close-and-place would blink.
+        update = function(new)
+            local resized = sizing(new.options)
+            placement.opts.max_width, placement.opts.max_height = resized.max_width, resized.max_height
+            placement:update()
+        end,
+    }
 
     -- Re-show the placement whenever this buffer gets a window again (e.g.
     -- switching back to it after visiting another buffer).
-    local autocmd = vim.api.nvim_create_autocmd('BufWinEnter', {
+    vim.api.nvim_create_autocmd('BufWinEnter', {
+        group = augroup,
         buffer = spec.buf,
         callback = function()
             vim.schedule(function()
@@ -277,13 +375,24 @@ local function snacks_preset(spec)
             end)
         end,
     })
-
-    return {
-        close = function()
-            pcall(vim.api.nvim_del_autocmd, autocmd)
-            pcall(placement.close, placement)
+    -- Also on edits, not just `on_update_pre`: snacks drops a placement
+    -- whose stale row is past the buffer's end before that hook runs.
+    vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
+        group = augroup,
+        buffer = spec.buf,
+        callback = function()
+            if track(placement) then
+                return
+            end
+            close()
+            -- Forget it, so a `:w` after undoing the deletion draws it again.
+            remove_where(bufs[spec.buf] and bufs[spec.buf].placed, function(st)
+                return st.handle == handle
+            end)
         end,
-    }
+    })
+
+    return handle
 end
 
 --- Bundled `inline.render` presets, each `fun(spec): handle?`, selected by
@@ -311,29 +420,48 @@ local function resolve_render()
     return place
 end
 
+--- One `render` placement, tracked in `bufs[buf].placed`.
+--- @class arcanist.RenderState
+--- @field monogram string
+--- @field options table<string, string|boolean> The embed options it was
+--- placed with; a `:w` keeps a placement whose monogram and options match.
+--- @field path string? What `handle` was placed from.
+--- @field info arcanist.FileInfo?
+--- @field handle arcanist.InlineHandle? Nil while the file downloads, or
+--- if `render` declined to draw it.
+--- @field closed boolean?
+
+--- @param st arcanist.RenderState
+local function close_render_state(st)
+    st.closed = true
+    if st.handle then
+        pcall(st.handle.close)
+    end
+end
+
 --- Close and forget `render`'s placements for `buf`.
 --- @param buf integer
 local function clear_render(buf)
     local r = bufs[buf]
-    if not r then
+    if not r or not r.placed then
         return
     end
-    for _, handle in ipairs(r.handles or {}) do
-        pcall(handle.close)
+    for _, st in ipairs(r.placed) do
+        close_render_state(st)
     end
-    r.handles = nil
-    r.shown = nil
+    r.placed = nil
 end
 
---- (Re)download and place every file monogram in `buf`, via
---- `config.file.inline.render`. `skip_unchanged` (the `:w` path) bails when
---- the referenced-file set is unchanged. `g` is the render generation; a
---- stale `file.fetch` callback compares against it. Does nothing to
---- `text`'s own placements -- see `sync_text` for those.
+--- Download and place every file monogram in `buf`, via
+--- `config.file.inline.render`. `incremental` (the `:w` path) keeps every
+--- placement whose reference is still there and only adds and removes the
+--- difference, so the images already on screen don't blink; otherwise
+--- everything is placed afresh. Matched by monogram and options, like
+--- `sync_text` without the position check: the snacks preset tracks its
+--- own. Does nothing to `text`'s own placements -- see `sync_text` for those.
 --- @param buf integer
---- @param g integer
---- @param skip_unchanged boolean
-local function render(buf, g, skip_unchanged)
+--- @param incremental boolean
+local function render(buf, incremental)
     if not enabled(buf) then
         return clear_render(buf)
     end
@@ -345,43 +473,74 @@ local function render(buf, g, skip_unchanged)
     local file = require('arcanist.file')
     local reference = require('arcanist.reference')
 
-    local items, monos = {}, {}
+    local current = {}
     for _, ref in ipairs(reference.monograms_in(buf)) do
         if file.file_id(ref.monogram) then
-            items[#items + 1] = ref
-            monos[#monos + 1] = ref.monogram
+            current[#current + 1] = ref
         end
     end
-    table.sort(monos)
 
-    local r = rec(buf)
-    if skip_unchanged and r.shown and vim.deep_equal(r.shown, monos) then
-        return
+    if not incremental then
+        clear_render(buf)
     end
+    local r = rec(buf)
+    local kept, claimed, unmatched = {}, {}, {}
+    for _, st in ipairs(r.placed or {}) do
+        if
+            claim(current, claimed, function(ref)
+                return ref.monogram == st.monogram and vim.deep_equal(ref.options, st.options)
+            end)
+        then
+            kept[#kept + 1] = st
+        else
+            unmatched[#unmatched + 1] = st
+        end
+    end
+    -- A reference whose options alone changed: resize it in place when the
+    -- handle can, rather than closing it and placing it anew.
+    for _, st in ipairs(unmatched) do
+        local i = st.handle
+            and st.handle.update
+            and claim(current, claimed, function(ref)
+                return ref.monogram == st.monogram
+            end)
+        if i then
+            local ref = current[i]
+            st.options = ref.options
+            pcall(st.handle.update, { buf = buf, range = ref.range, path = st.path, info = st.info, options = ref.options })
+            kept[#kept + 1] = st
+        else
+            close_render_state(st)
+        end
+    end
+    r.placed = kept
 
-    clear_render(buf)
-    r.shown = monos
-    r.handles = {}
-
-    for _, ref in ipairs(items) do
-        file.fetch(ref.monogram, { quiet = true }, function(path, info)
-            local cur = bufs[buf]
-            if not cur or cur.gen ~= g or not path or not vim.api.nvim_buf_is_valid(buf) then
-                return
-            end
-            local handle = place({ buf = buf, range = ref.range, path = path, info = info, options = ref.options })
-            if handle and cur.handles then
-                table.insert(cur.handles, handle)
-            end
-        end)
+    for i, ref in ipairs(current) do
+        if not claimed[i] then
+            local st = { monogram = ref.monogram, options = ref.options }
+            table.insert(kept, st)
+            file.fetch(ref.monogram, { quiet = true }, function(path, info)
+                if st.closed or not vim.api.nvim_buf_is_valid(buf) then
+                    return
+                end
+                if not path then
+                    -- Forget it, so the next `:w` tries again.
+                    return remove_where(bufs[buf] and bufs[buf].placed, function(e)
+                        return e == st
+                    end)
+                end
+                st.path, st.info = path, info
+                st.handle = place({ buf = buf, range = ref.range, path = path, info = info, options = ref.options })
+            end)
+        end
     end
 end
 
 --- @param buf integer
---- @param skip_unchanged boolean
-local function schedule_render(buf, skip_unchanged)
-    schedule(buf, 'gen', function(b, g)
-        render(b, g, skip_unchanged)
+--- @param incremental boolean
+local function schedule_render(buf, incremental)
+    schedule(buf, 'gen', function(b)
+        render(b, incremental)
     end)
 end
 
@@ -496,16 +655,21 @@ local function place_text(buf, monogram, embed_range, text)
     -- it -- matching `conceal_id`'s own end, whose `end_right_gravity`
     -- already defaults to false for the same reason (typed text right
     -- after "}" must not get absorbed into the concealed range either).
+    --
+    -- `invalidate` on both: deleting the reference's line would otherwise
+    -- slide them onto the next line for the frame before `sync_text` runs.
     local conceal_id = vim.api.nvim_buf_set_extmark(buf, text_ns, sr, sc, {
         end_row = er,
         end_col = ec,
         conceal = '',
+        invalidate = true,
     })
     local text_id = vim.api.nvim_buf_set_extmark(buf, text_ns, er, ec, {
         virt_text = { { text, 'Conceal' } },
         virt_text_pos = 'inline',
         priority = TEXT_PRIORITY,
         right_gravity = false,
+        invalidate = true,
     })
 
     return { monogram = monogram, conceal_id = conceal_id, text_id = text_id, text = text, revealed = false }
@@ -539,6 +703,7 @@ local function set_revealed(buf, st, want, row, col)
         virt_text_pos = virt_text_pos,
         priority = TEXT_PRIORITY,
         right_gravity = false,
+        invalidate = true,
     })
 end
 
@@ -573,7 +738,7 @@ local function sync_text_reveal(buf)
 
     for _, st in ipairs(r.text) do
         local cm, tm = st.conceal_id and by_id[st.conceal_id], st.text_id and by_id[st.text_id]
-        if cm and tm then
+        if cm and tm and not cm[4].invalid then
             local row, col, details = cm[2], cm[3], cm[4]
             local er2, ec2 = details.end_row or row, details.end_col or col
             local inside
@@ -668,7 +833,7 @@ local function sync_text(buf)
     -- left over of the right monogram) -- doing placed entries first
     -- means a pending entry can never steal the specific ref a placed one
     -- needs out from under it just by coming first in `r.text`'s order.
-    local claimed = {} -- ref (table identity) -> true
+    local claimed = {}
     local kept, pending = {}, {}
     for _, st in ipairs(r.text) do
         if st.conceal_id then
@@ -678,23 +843,16 @@ local function sync_text(buf)
                 local row, col, details = mark[1], mark[2], mark[3]
                 local er2, ec2 = details.end_row or row, details.end_col or col
                 if row < er2 or (row == er2 and col < ec2) then -- not degenerate/inverted
-                    for _, ref in ipairs(current) do
-                        if
-                            not claimed[ref]
-                            and ref.monogram == st.monogram
+                    match = claim(current, claimed, function(ref)
+                        return ref.monogram == st.monogram
                             and ref.embed_range[1] == row
                             and ref.embed_range[2] == col
                             and ref.embed_range[3] == er2
                             and ref.embed_range[4] == ec2
-                        then
-                            match = ref
-                            break
-                        end
-                    end
+                    end)
                 end
             end
             if match then
-                claimed[match] = true
                 kept[#kept + 1] = st
             else
                 close_text_state(buf, st)
@@ -704,15 +862,10 @@ local function sync_text(buf)
         end
     end
     for _, st in ipairs(pending) do
-        local match
-        for _, ref in ipairs(current) do
-            if not claimed[ref] and ref.monogram == st.monogram then
-                match = ref
-                break
-            end
-        end
+        local match = claim(current, claimed, function(ref)
+            return ref.monogram == st.monogram
+        end)
         if match then
-            claimed[match] = true
             kept[#kept + 1] = st
         else
             close_text_state(buf, st)
@@ -727,8 +880,8 @@ local function sync_text(buf)
         ensure_conceallevel(buf)
     end
 
-    for _, ref in ipairs(current) do
-        if not claimed[ref] then
+    for i, ref in ipairs(current) do
+        if not claimed[i] then
             local st = { monogram = ref.monogram }
             r.text[#r.text + 1] = st
             file.info(ref.monogram, { quiet = true }, function(info)
@@ -738,19 +891,16 @@ local function sync_text(buf)
                 local text = info and (info.alt or info.name)
                 if not text then
                     close_text_state(buf, st) -- nothing to show; drop the slot
-                    local cur = bufs[buf]
-                    if cur and cur.text then
-                        for i, e in ipairs(cur.text) do
-                            if e == st then
-                                table.remove(cur.text, i)
-                                break
-                            end
-                        end
-                    end
+                    remove_where(bufs[buf] and bufs[buf].text, function(e)
+                        return e == st
+                    end)
                     return
                 end
                 local placed = place_text(buf, ref.monogram, ref.embed_range, text)
                 st.conceal_id, st.text_id, st.text, st.revealed = placed.conceal_id, placed.text_id, placed.text, false
+                if buf == vim.api.nvim_get_current_buf() then
+                    sync_text_reveal(buf)
+                end
             end)
         end
     end
@@ -778,7 +928,7 @@ function M.disable(buf)
     buf = resolve_buf(buf)
     local r = rec(buf)
     r.override = false
-    r.gen = r.gen + 1 -- invalidate in-flight file.fetch callbacks
+    r.gen = r.gen + 1 -- drop a scheduled, not yet run render
     r.text_gen = r.text_gen + 1
     clear_render(buf)
     clear_text(buf)

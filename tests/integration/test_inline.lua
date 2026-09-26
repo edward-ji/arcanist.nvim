@@ -211,6 +211,45 @@ T['a custom render function receives the downloaded file, closed on disable'] = 
     eq(child.lua_get('_G.__render_closed'), 1)
 end
 
+T['saving an edited comment updates only the previews that changed'] = function()
+    child.lua([[
+        _G.__log = {}
+        require('arcanist').setup({
+            file = {
+                inline = {
+                    render = function(spec)
+                        local mono = spec.info.monogram
+                        table.insert(_G.__log, 'show ' .. mono)
+                        return {
+                            close = function() table.insert(_G.__log, 'hide ' .. mono) end,
+                            update = function(s) table.insert(_G.__log, 'resize ' .. mono .. ' ' .. s.options.size) end,
+                        }
+                    end,
+                },
+            },
+        })
+    ]])
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'screenshot.png', size = 1500 }))
+    child.fixture('download', { bytes = 'PNGDATA' })
+
+    local path = child.dir .. '/comment.remarkup'
+    local f = assert(io.open(path, 'w'))
+    f:write('The crash: {F123}\n\nOld diagram: {F124}\n')
+    f:close()
+    child.cmd('edit ' .. path)
+    child.wait_until('#_G.__log >= 2')
+    child.lua('_G.__log = {}')
+
+    -- Enlarge the screenshot, swap the diagram for a new one, save.
+    child.api.nvim_buf_set_lines(0, 0, -1, false, { 'The crash: {F123, size=full}', '', 'New diagram: {F125}' })
+    child.cmd('write')
+    child.wait_until('#_G.__log >= 3')
+
+    local log = child.lua_get('_G.__log')
+    table.sort(log)
+    eq(log, { 'hide F124', 'resize F123 full', 'show F125' })
+end
+
 T['a screenshot embedded twice in a comment previews both times'] = function()
     child.lua([[
         _G.__previews = {}

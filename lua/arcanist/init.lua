@@ -45,6 +45,9 @@ local M = {}
 
 --- @class arcanist.InlineHandle
 --- @field close fun() Tear this placement down.
+--- @field update (fun(spec: arcanist.InlineSpec))? Apply a `:w` that only
+--- changed this reference's embed options in place. Without it, the
+--- placement is closed and the reference placed afresh.
 
 --- @class arcanist.InlineConfig
 --- @field text boolean Conceal each referenced monogram and show Phorge's
