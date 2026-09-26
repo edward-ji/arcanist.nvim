@@ -93,7 +93,11 @@ function M.call_sync(method, params, timeout)
     if not ok then
         return false, nil, vim.trim(tostring(obj))
     end
-    return decode_result(obj:wait(timeout))
+    local result = obj:wait(timeout)
+    if not result then
+        return false, nil, 'arc call-conduit timed out'
+    end
+    return decode_result(result)
 end
 
 return M
