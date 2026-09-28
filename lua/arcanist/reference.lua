@@ -1230,10 +1230,10 @@ local function write_reference(args)
     -- (a formatter, say) is part of what gets pushed, and announce the write
     -- only once it has actually landed.
     local bufnr = args.buf
-    vim.api.nvim_exec_autocmds('BufWritePre', { buffer = bufnr })
+    vim.api.nvim_exec_autocmds('BufWritePre', { pattern = args.match })
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     if push(bufnr, handler, prefix, key, lines, vim.v.cmdbang == 1) then
-        vim.api.nvim_exec_autocmds('BufWritePost', { buffer = bufnr })
+        vim.api.nvim_exec_autocmds('BufWritePost', { pattern = args.match })
     end
 end
 
@@ -1249,7 +1249,7 @@ local function read_reference(args)
         return
     end
 
-    vim.api.nvim_exec_autocmds('FileReadPre', { buffer = args.buf })
+    vim.api.nvim_exec_autocmds('FileReadPre', { pattern = args.match })
     local obj, err = fetch_sync(handler, key)
     if not obj then
         notify.err(string.format('failed to read %s: %s', handler.format(key), err or 'not found'))
@@ -1263,7 +1263,7 @@ local function read_reference(args)
     -- leave around it, which is what "'[,']" after one addresses.
     vim.api.nvim_buf_set_mark(args.buf, '[', at + 1, 0, {})
     vim.api.nvim_buf_set_mark(args.buf, ']', at + #document, 0, {})
-    vim.api.nvim_exec_autocmds('FileReadPost', { buffer = args.buf })
+    vim.api.nvim_exec_autocmds('FileReadPost', { pattern = args.match })
 end
 
 --- Handle ":ArcWrite[!] [ref]". `ref` defaults to the current buffer's own
