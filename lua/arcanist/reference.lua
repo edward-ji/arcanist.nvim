@@ -53,8 +53,10 @@ local M = {}
 --- @field type string Phorge's own prose name for one ("task", "revision").
 --- @field plural string `type`, pluralized (not just suffixed -- not every
 --- noun inflects with an "s").
---- @field identity string The label naming this type on a document's last
---- line, spelled the way Phorge spells it.
+--- @field identity string The label naming this type on a document's
+--- identity line, spelled the way Phorge spells it.
+--- @field dated boolean? Whether `search` reports `fields.dateModified`,
+--- which is what a document's "Last Modified:" line records.
 --- @field query_keys string[] This type's search engine's builtin queries.
 --- @field filters table<string, string> Filter word -> `constraints` key.
 --- @field fields table[] The document schema (see arcanist.fields).
@@ -212,6 +214,7 @@ local HANDLERS = {
         type = 'task',
         plural = 'tasks',
         identity = 'Maniphest Task',
+        dated = true,
         query_keys = { 'assigned', 'authored', 'subscribed', 'open', 'all' },
         filters = { owner = 'assigned', author = 'authorPHIDs' },
         fields = {
@@ -260,6 +263,7 @@ local HANDLERS = {
         type = 'revision',
         plural = 'revisions',
         identity = 'Differential Revision',
+        dated = true,
         query_keys = { 'active', 'authored', 'all' },
         filters = { author = 'authorPHIDs' },
         fields = {
@@ -322,6 +326,10 @@ local HANDLERS = {
     --
     -- arcanist.list's picker assumes a search result's own ref key is
     -- `obj.id`; W's is `obj.fields.path` instead (see `key_of` below).
+    --
+    -- Not `dated`: neither `fields` nor the `content` attachment carries a
+    -- timestamp (confirmed against the Phorge source), so a wiki document
+    -- has no "Last Modified:" line.
     W = {
         search = 'phriction.document.search',
         params = function(slug)
@@ -491,6 +499,27 @@ local TYPE_NAMES = {}
 --- @type table<string, string>
 local IDENTITY = {}
 
+--- The label of the line under the identity line recording the server's
+--- `dateModified` as of the fetch. Below rather than above: Phorge's commit
+--- message parser appends an unknown "Label:" line to whatever field
+--- precedes it, and only "Differential Revision:" reads just its first line,
+--- so this is the one place `arc diff` still accepts the document.
+local LAST_MODIFIED = 'Last Modified'
+
+--- @param line string
+--- @return boolean
+local function is_last_modified(line)
+    return vim.startswith(vim.trim(line), LAST_MODIFIED .. ':')
+end
+
+--- `epoch` in UTC ISO 8601, which sorts as text in time order -- so a
+--- "Last Modified:" value is compared as the string it is.
+--- @param epoch integer
+--- @return string
+local function iso8601(epoch)
+    return os.date('!%Y-%m-%dT%H:%M:%SZ', epoch) --[[@as string]]
+end
+
 --- @class arcanist.ObjectType
 --- @field handler table The HANDLERS entry.
 --- @field prefix string The monogram prefix it is keyed by ("T"), which a
@@ -519,6 +548,16 @@ for prefix, handler in pairs(HANDLERS) do
             return handler.format(handler.key_of(obj))
         end,
     })
+    if handler.dated then
+        table.insert(handler.fields, {
+            key = 'last_modified',
+            kind = 'line',
+            label = LAST_MODIFIED,
+            read = function(f)
+                return f.dateModified and iso8601(f.dateModified)
+            end,
+        })
+    end
 end
 table.sort(TYPE_NAMES)
 
@@ -799,9 +838,10 @@ local function load_reference(bufnr, handler, prefix, key, overwrite)
     end)
 end
 
---- The object `bufnr` says it is: its last non-blank line, labelled with one
---- of HANDLERS' `identity` spellings and naming a single object. The monogram
---- decides the type; the label only qualifies the line as an identity at all.
+--- The object `bufnr` says it is: its last non-blank line (or the one above
+--- a trailing "Last Modified:"), labelled with one of HANDLERS' `identity`
+--- spellings and naming a single object. The monogram decides the type; the
+--- label only qualifies the line as an identity at all.
 --- Answered off the raw text because it settles which type's field list to
 --- parse with, before there is one to parse against.
 ---
@@ -824,14 +864,21 @@ local function identity_of(bufnr)
     -- for the current buffer -- hence nvim_buf_call, which switches to
     -- `bufnr` without firing autocmds. Line 1 is always the title (see
     -- fields.parse), so a lone identity line is a title that looks like one.
-    local lnum = vim.api.nvim_buf_call(bufnr, function()
-        return vim.fn.prevnonblank(vim.api.nvim_buf_line_count(bufnr))
-    end)
+    local function last_line(before)
+        local lnum = vim.api.nvim_buf_call(bufnr, function()
+            return vim.fn.prevnonblank(before)
+        end)
+        return lnum, lnum > 0 and vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ''
+    end
+
+    local lnum, line = last_line(vim.api.nvim_buf_line_count(bufnr))
+    if is_last_modified(line) then
+        lnum, line = last_line(lnum - 1)
+    end
     if lnum < 2 then
         return nil
     end
 
-    local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
     local label, value = vim.trim(line):match('^([^:]+):%s*(.*)$')
     local want = label and IDENTITY[label]
     if not want then
@@ -868,6 +915,49 @@ function M.filetype_of(bufnr)
     return prefix and HANDLERS[prefix].filetype
 end
 
+--- The server `dateModified` `bufnr`'s text is based on, if it records one:
+--- its "Last Modified:" value (`raw`, parsed out of it), raised to what the
+--- last push from this buffer recorded, since undo can take the line back
+--- past that push. No line, or an empty one, is no record at all.
+--- @param bufnr integer
+--- @param ref_name string
+--- @param raw string?
+--- @return string? last_modified
+--- @return string? err
+local function last_modified_of(bufnr, ref_name, raw)
+    if raw == nil or raw == '' then
+        return nil
+    end
+    if not raw:match('^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$') then
+        return nil, string.format('"%s: %s" is not a UTC time like %s', LAST_MODIFIED, raw, iso8601(0))
+    end
+    local pushed = vim.b[bufnr].arcanist_last_modified
+    if pushed and pushed.ref == ref_name and pushed.value > raw then
+        return pushed.value
+    end
+    return raw
+end
+
+--- Rewrite `bufnr`'s "Last Modified:" line to `value`, and remember it for
+--- `last_modified_of`. Only that line changes, so the cursor stays put; the
+--- edit is its own undo step, as Vim has no way to make one that isn't.
+--- @param bufnr integer
+--- @param ref_name string
+--- @param value string
+local function set_last_modified(bufnr, ref_name, value)
+    vim.b[bufnr].arcanist_last_modified = { ref = ref_name, value = value }
+    local new = string.format('%s: %s', LAST_MODIFIED, value)
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    for i = #lines, 1, -1 do
+        if is_last_modified(lines[i]) then
+            if lines[i] ~= new then
+                vim.api.nvim_buf_set_lines(bufnr, i - 1, i, false, { new })
+            end
+            return
+        end
+    end
+end
+
 --- Push `lines` (from `bufnr`) to `prefix`+`key` over Conduit. When `bufnr`
 --- is itself the "arcanist://<ref>" buffer being updated, runs the
 --- staleness guard first (unless `force`) and refreshes its
@@ -881,10 +971,14 @@ end
 --- successful push), which names the object it was taken from. A buffer
 --- carrying a baseline for some other object, or none at all (`:w
 --- arcanist://T1` from an unrelated buffer), sends every field present in
---- it -- there's nothing to diff against, and nothing to check for
---- staleness either. Either way, a field whose label was deleted from the
---- buffer is simply absent from the parse, and left untouched on the
---- server.
+--- it -- there's nothing to diff against. Either way, a field whose label
+--- was deleted from the buffer is simply absent from the parse, and left
+--- untouched on the server.
+---
+--- Without a baseline, a "Last Modified:" line under a matching identity
+--- line (a draft's) is the staleness guard instead: the server's
+--- `dateModified` having moved past it refuses the push, and a push that
+--- lands moves the line up to the new one.
 ---
 --- An identity line is cross-checked against the target first, whichever
 --- entry point got here, so no path can push one object's text over
@@ -953,6 +1047,18 @@ local function push(bufnr, handler, prefix, key, lines, force)
         return false
     end
 
+    -- Only under the identity line it dates: with that line deleted to push
+    -- the text elsewhere, it dates some other object.
+    local last_modified
+    if id_prefix then
+        local lm_err
+        last_modified, lm_err = last_modified_of(bufnr, ref_name, values.last_modified)
+        if lm_err then
+            notify.err(string.format('failed to update %s: %s', ref_name, lm_err))
+            return false
+        end
+    end
+
     local transactions = {}
     for _, field in ipairs(handler.fields) do
         local raw = values[field.key]
@@ -993,7 +1099,7 @@ local function push(bufnr, handler, prefix, key, lines, force)
     -- would otherwise have to re-fetch the very same object just to read
     -- something off it (see HANDLERS.W).
     local fresh_obj
-    if baseline and not force then
+    if (baseline or last_modified) and not force then
         local obj, err = fetch_sync(handler, key)
         if err then
             notify.err(string.format('failed to check %s for changes: %s', ref_name, err))
@@ -1008,16 +1114,31 @@ local function push(bufnr, handler, prefix, key, lines, force)
         -- one-second resolution and moves for a write that changed nothing.
         -- Fields with no `write` are left out: a write cannot reach them, so
         -- a change to one is not a change this write could lose.
-        local current = fields.raw_values(handler.fields, obj)
         local drifted = false
-        for _, field in ipairs(handler.fields) do
-            if
-                field.write
-                and fields.changed(field, baseline.values[field.key], current[field.key])
-            then
-                drifted = true
-                break
+        if baseline then
+            local current = fields.raw_values(handler.fields, obj)
+            for _, field in ipairs(handler.fields) do
+                if
+                    field.write
+                    and fields.changed(field, baseline.values[field.key], current[field.key])
+                then
+                    drifted = true
+                    break
+                end
             end
+        elseif obj.fields.dateModified and iso8601(obj.fields.dateModified) > last_modified then
+            -- No fields to compare, so dateModified is all there is.
+            notify.err(
+                string.format(
+                    '%s changed on the server since %s. Your edits are still here; '
+                        .. ':w {file} to keep a copy, then :e! %s to refetch -- or :ArcWrite! '
+                        .. 'to overwrite the server\'s version',
+                    ref_name,
+                    last_modified,
+                    M.uri(prefix, key)
+                )
+            )
+            return false
         end
         if drifted then
             -- `:e` alone won't work here -- the buffer is modified, so Vim
@@ -1050,29 +1171,43 @@ local function push(bufnr, handler, prefix, key, lines, force)
         end
     end
 
-    if not baseline then
+    if not baseline and not last_modified then
         notify.info('updated ' .. ref_name)
         return true
     end
 
-    -- Re-fetch for a baseline matching what the server now holds. Content
-    -- is deliberately left alone so the cursor and undo history survive the
-    -- save.
+    -- Re-fetch for a baseline and a "Last Modified:" matching what the
+    -- server now holds. Content bar that one line is deliberately left alone
+    -- so the cursor and undo history survive the save.
     local obj, refresh_err = fetch_sync(handler, key)
+    if obj and last_modified and obj.fields.dateModified then
+        set_last_modified(bufnr, ref_name, iso8601(obj.fields.dateModified))
+    end
     if is_own then
         vim.bo[bufnr].modified = false
     end
     if obj then
-        vim.b[bufnr].arcanist_loaded = {
-            ref = ref_name,
-            values = fields.raw_values(handler.fields, obj),
-        }
+        if baseline then
+            vim.b[bufnr].arcanist_loaded = {
+                ref = ref_name,
+                values = fields.raw_values(handler.fields, obj),
+            }
+        end
         notify.info('updated ' .. ref_name)
-    else
+    elseif baseline then
         notify.warn(
             string.format(
                 'updated %s, but could not refresh it (%s); :e to reload',
                 ref_name,
+                refresh_err or 'not found'
+            )
+        )
+    else
+        notify.warn(
+            string.format(
+                'updated %s, but could not read back its new %s (%s); the next :ArcWrite may need !',
+                ref_name,
+                LAST_MODIFIED,
                 refresh_err or 'not found'
             )
         )

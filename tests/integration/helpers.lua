@@ -121,6 +121,13 @@ function Helpers.new_child()
         return child.lua_get('_G.__notify_log') or {}
     end
 
+    --- The last message captured since `capture_notify()`, or nil.
+    --- @return string?
+    function child.last_notification()
+        local log = child.notifications()
+        return log[#log] and log[#log].msg
+    end
+
     --- Block until a captured message contains `substr`, or 2s pass.
     --- @param substr string
     function child.wait_for_notification(substr)
@@ -137,11 +144,15 @@ function Helpers.new_child()
     return child
 end
 
+--- The `dateModified` a fixture object has unless a test says otherwise:
+--- 2026-09-21T14:13:20Z.
+Helpers.MODIFIED = 1790000000
+
 --- A `maniphest.search`-shaped response envelope for one task, matching
 --- what HANDLERS.T's fields read from (lua/arcanist/reference.lua).
 --- `projects` (project PHIDs) is the one field that isn't rendered from
 --- this response alone -- see `resolve_projects` in reference.lua.
---- @param opts { id: integer, title: string, status: string?, priority: string?, description: string?, projects: string[]? }
+--- @param opts { id: integer, title: string, status: string?, priority: string?, description: string?, projects: string[]?, modified: integer? }
 --- @return table
 function Helpers.task_response(opts)
     return {
@@ -153,6 +164,7 @@ function Helpers.task_response(opts)
                     status = { name = opts.status or 'Open' },
                     priority = { name = opts.priority or 'Normal' },
                     description = { raw = opts.description or '' },
+                    dateModified = opts.modified or Helpers.MODIFIED,
                 },
                 attachments = { projects = { projectPHIDs = opts.projects or {} } },
             },
@@ -162,7 +174,7 @@ end
 
 --- A `differential.revision.search`-shaped response envelope for one
 --- revision, matching HANDLERS.D's fields.
---- @param opts { id: integer, title: string, summary: string?, testPlan: string? }
+--- @param opts { id: integer, title: string, summary: string?, testPlan: string?, modified: integer? }
 --- @return table
 function Helpers.revision_response(opts)
     return {
@@ -173,6 +185,7 @@ function Helpers.revision_response(opts)
                     title = opts.title,
                     summary = opts.summary or '',
                     testPlan = opts.testPlan or '',
+                    dateModified = opts.modified or Helpers.MODIFIED,
                 },
             },
         },

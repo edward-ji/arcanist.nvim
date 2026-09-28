@@ -63,6 +63,17 @@ T['a file with no name of its own is guessed by its trailing identity line'] = f
     eq(child.lua_get('vim.bo.filetype'), 'remarkup')
 end
 
+T['a saved document is still guessed with its Last Modified line under the identity line'] = function()
+    local path = child.dir .. '/saved-task'
+    local f = assert(io.open(path, 'w'))
+    f:write('Some title\n\nDescription text.\n\nManiphest Task: T5\nLast Modified: 2026-09-21T14:13:20Z\n')
+    f:close()
+
+    child.cmd('edit ' .. path)
+
+    eq(child.lua_get('vim.bo.filetype'), 'remarkup')
+end
+
 T['content-based identity detection is skipped when detect.identity is off'] = function()
     child.lua([[require('arcanist').setup({ detect = { identity = false } })]])
 

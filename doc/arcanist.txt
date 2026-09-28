@@ -68,7 +68,8 @@ commit there, not just the ones headed for a revision. See
 
 Failing all of that, a file is read for its last line: a document saved out
 of an "arcanist://" buffer ends with the line naming the object it is --
-"Maniphest Task: T123" -- and a file ending that way is taken for Remarkup,
+"Maniphest Task: T123", give or take the "Last Modified:" line under it --
+and a file ending that way is taken for Remarkup,
 extension or no. See |arcanist-identity| for what counts as one. It is a
 guess -- `git log` output for a landed revision ends the same way -- so turn
 it off with |arcanist-config-detect.identity| if it misfires.
@@ -236,11 +237,14 @@ redirects to the draft once one exists. Every file under `drafts.dir` opens
 as Remarkup. Drafts are one file per object and are never deleted for you --
 the directory is yours to prune.
 
-`:ArcWrite` on a draft has no staleness guard: it sends every field in the
-document, so a field the server changed while your draft sat unopened is
-overwritten with the draft's value. The guard in |arcanist-write| only
-protects a live "arcanist://" buffer, which drafts replace. Reopen the draft
-before `:ArcWrite` if the object may have moved.
+`:ArcWrite` on a draft sends every field in the document, since a draft
+carries no record of the fields as fetched. What it does carry is the
+object's "Last Modified:" line (see |arcanist-last-modified|): if the object
+was edited on the web after that time, `:ArcWrite` stops and says so, and
+`:ArcWrite!` pushes anyway. A push that lands moves the line up to the
+object's new time, leaving the draft modified for your next `:w`. Wiki
+documents have no such line -- Phorge does not report when one changed -- so
+a wiki draft is pushed unchecked.
 
 ==============================================================================
 4. FIELDS                                                    *arcanist-fields*
@@ -262,6 +266,7 @@ A task looks like this: >
     See {T98} for the original report.
 
     Maniphest Task: T123
+    Last Modified: 2026-09-21T14:13:20Z
 <
 A revision looks like this: >
 
@@ -274,6 +279,7 @@ A revision looks like this: >
     Ran the exporter against staging with and without the flag.
 
     Differential Revision: D456
+    Last Modified: 2026-09-21T14:13:20Z
 <
 RULES
 
@@ -291,8 +297,9 @@ Delete a field's label and that field is left untouched on the server. This is
 the way to save an edit to one field without touching the others, though it is
 rarely needed -- unchanged fields are not sent in the first place.
 
-The last field names the object rather than describing it, and is the one
-field never sent back. See |arcanist-identity|.
+The last two fields name the object and the time it last changed rather than
+describing it, and are never sent back. See |arcanist-identity| and
+|arcanist-last-modified|.
 
 STATUS AND PRIORITY
 
@@ -332,8 +339,8 @@ line to allow it.
 A buffer saved out this way keeps what it knows about the object: `:ArcWrite`
 still sends only the fields you edited, and still stops if the object changed
 on the server since it loaded. Reopen the file later, in a buffer that never
-held the object, and neither is true -- everything in it is sent, unchecked.
-The line is enough to make the file Remarkup again, though, whatever it is
+held the object, and everything in it is sent, checked only against its
+"Last Modified:" line (see |arcanist-last-modified|). The line is enough to make the file Remarkup again, though, whatever it is
 named; see |arcanist-remarkup|.
 
 FINDING THE TARGET
@@ -344,7 +351,8 @@ T123" from "this revision references T123". So `:ArcWrite` is narrow about it.
 Four rules:
 
     1. Only the last non-blank line is looked at -- where this plugin puts
-       it, and where `arc` puts "Differential Revision".
+       it, and where `arc` puts "Differential Revision" -- or the one above
+       it, when that is a "Last Modified:" line.
     2. The label is exactly "Maniphest Task:" or "Differential Revision:".
        The plural "Maniphest Tasks:" is a revision's list of referenced
        tasks and names nothing -- which is what keeps `:ArcWrite` in an
@@ -361,6 +369,30 @@ One case gets this wrong: a revision message you typed yourself, using the
 singular "Maniphest Task:" as its last line, with no "Differential Revision:"
 line, reads as a task. Nothing `arc` writes looks like that -- it always
 spells the label in the plural.
+
+LAST MODIFIED                                         *arcanist-last-modified*
+
+Under the identity line of a task or revision sits the time the object last
+changed on the server, as of when it was fetched, in UTC: >
+
+    Maniphest Task: T123
+    Last Modified: 2026-09-21T14:13:20Z
+<
+Like the identity line it is never sent. It is what lets a file that has
+left its "arcanist://" buffer -- a draft above all -- tell whether the object
+was edited on the web since: `:ArcWrite` stops if the object's time is later,
+and `:ArcWrite!` pushes anyway. A push that lands moves the line up to the
+object's new time, as its own undo step; undoing it does not make the next
+`:ArcWrite` see your own push as somebody else's.
+
+It is a coarse check. A save on the web that changed nothing still moves the
+time, so it can stop a push that would have lost nothing -- `!` is the way
+past. Delete the line and nothing is checked, as before it existed.
+
+It goes under the identity line, not above it, so a revision's document is
+still a message `arc diff` accepts: Phorge reads only the first line of
+"Differential Revision:", and would read a line above it as part of the field
+before.
 
 ==============================================================================
 5. COMPLETION AND GO-TO                                         *arcanist-lsp*
@@ -909,6 +941,12 @@ Every message the plugin prints is prefixed "arcanist.nvim:".
 "T123 changed on the server since it was loaded" ~
     Somebody else edited it while you had it open. Your edits are still in the
     buffer; see |arcanist-write| for the three ways out.
+
+"T123 changed on the server since 2026-09-21T14:13:20Z" ~
+    The object was edited on the web after the time on this file's "Last
+    Modified:" line. Your edits are still in the buffer: keep a copy with
+    `:w {file}`, then `:e! arcanist://T123` to refetch, or `:ArcWrite!` to
+    overwrite the server's version. See |arcanist-last-modified|.
 
 "T123 has not loaded successfully; nothing to update" ~
     The buffer never received content, so there is nothing to diff a write

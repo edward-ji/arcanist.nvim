@@ -23,13 +23,6 @@ local function open(ref)
     child.wait_until('vim.b[0].arcanist_loaded ~= nil')
 end
 
---- The last captured notify message, or nil.
---- @return string?
-local function last_notification()
-    local log = child.notifications()
-    return log[#log] and log[#log].msg
-end
-
 T['opening an arcanist:// buffer renders the fetched object'] = function()
     child.fixture(
         'call-conduit maniphest.search',
@@ -50,6 +43,7 @@ T['opening an arcanist:// buffer renders the fetched object'] = function()
         'Project Tags: ',
         '',
         'Maniphest Task: T5',
+        'Last Modified: 2026-09-21T14:13:20Z',
     })
 end
 
@@ -73,6 +67,7 @@ T['opening a revision renders its own (different) field list'] = function()
         'Project Tags: ',
         '',
         'Differential Revision: D2',
+        'Last Modified: 2026-09-21T14:13:20Z',
     })
 end
 
@@ -129,7 +124,7 @@ T['object not found on load'] = function()
     child.wait_for_notification('T404 not found')
 
     eq(child.lua_get('vim.b[0].arcanist_loaded == nil'), true)
-    eq(last_notification(), 'arcanist.nvim: T404 not found')
+    eq(child.last_notification(), 'arcanist.nvim: T404 not found')
 end
 
 T[':write sends exactly the changed field, and clears modified'] = function()
@@ -159,6 +154,24 @@ T[':write sends exactly the changed field, and clears modified'] = function()
     eq(child.lua_get('vim.bo.modified'), false)
 end
 
+T[':write moves the Last Modified line up to the server\'s new one'] = function()
+    child.fixture('call-conduit maniphest.search', {
+        __sequence = {
+            helpers.task_response({ id = 5, title = 'Fix bug' }),
+            helpers.task_response({ id = 5, title = 'Fix bug' }),
+            helpers.task_response({ id = 5, title = 'Fix bug (updated)', modified = helpers.MODIFIED + 60 }),
+        },
+    })
+    child.fixture('call-conduit maniphest.edit', { object = { id = 5 } })
+
+    open('T5')
+    child.type_keys('gg', 'A', ' (updated)', '<Esc>')
+    child.cmd('write')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, -2, -1, false)')[1], 'Last Modified: 2026-09-21T14:14:20Z')
+    eq(child.lua_get('vim.bo.modified'), false)
+end
+
 T[':write with no edits sends nothing'] = function()
     child.capture_notify()
     child.fixture('call-conduit maniphest.search', helpers.task_response({ id = 5, title = 'Fix bug' }))
@@ -168,7 +181,7 @@ T[':write with no edits sends nothing'] = function()
 
     eq(#child.calls('call-conduit maniphest.search'), 1) -- no conflict check, no refresh
     eq(#child.calls('call-conduit maniphest.edit'), 0)
-    eq(last_notification(), 'arcanist.nvim: T5: no changes to update')
+    eq(child.last_notification(), 'arcanist.nvim: T5: no changes to update')
     eq(child.lua_get('vim.bo.modified'), false)
 end
 
@@ -187,7 +200,7 @@ T[':write refuses when the pre-write conflict check times out'] = function()
     child.cmd('write')
 
     eq(#child.calls('call-conduit maniphest.edit'), 0)
-    eq(last_notification(), 'arcanist.nvim: failed to check T5 for changes: arc call-conduit timed out')
+    eq(child.last_notification(), 'arcanist.nvim: failed to check T5 for changes: arc call-conduit timed out')
     eq(child.lua_get('vim.bo.modified'), true) -- the write never went through
 end
 
@@ -209,7 +222,7 @@ T[':write warns (but keeps the edit) when the post-write refresh times out'] = f
 
     eq(#child.calls('call-conduit maniphest.edit'), 1) -- the edit itself still went through
     eq(
-        last_notification(),
+        child.last_notification(),
         'arcanist.nvim: updated T5, but could not refresh it (arc call-conduit timed out); :e to reload'
     )
     eq(child.lua_get('vim.bo.modified'), false)
@@ -248,7 +261,7 @@ T[':write refuses when the server drifted since load'] = function()
 
     eq(#child.calls('call-conduit maniphest.edit'), 0)
     eq(
-        last_notification(),
+        child.last_notification(),
         'arcanist.nvim: T5 changed on the server since it was loaded. Your edits are still here; '
             .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! to overwrite '
             .. "the server's version"
@@ -293,7 +306,7 @@ T['editing a value_source field to an invalid value refuses the write'] = functi
 
     eq(#child.calls('call-conduit maniphest.edit'), 0)
     eq(
-        last_notification(),
+        child.last_notification(),
         'arcanist.nvim: failed to update T5: "Not A Real Status" is not valid -- expected one '
             .. 'of: Open, Resolved'
     )
@@ -348,7 +361,7 @@ T['editing Projects to an unknown hashtag refuses the write'] = function()
     child.cmd('write')
 
     eq(#child.calls('call-conduit maniphest.edit'), 0)
-    eq(last_notification(), 'arcanist.nvim: failed to update T5: no such project: #nonexistent')
+    eq(child.last_notification(), 'arcanist.nvim: failed to update T5: no such project: #nonexistent')
 end
 
 T['editing Projects on a wiki page sends its own phriction.document.edit call'] = function()
@@ -387,12 +400,12 @@ T['a mismatched identity line refuses to push elsewhere'] = function()
     child.fixture('call-conduit maniphest.search', helpers.task_response({ id = 5, title = 'Fix bug' }))
 
     open('T5')
-    child.lua([[vim.api.nvim_buf_set_lines(0, -2, -1, false, {'Maniphest Task: T99'})]])
+    child.lua([[vim.api.nvim_buf_set_lines(0, -3, -2, false, {'Maniphest Task: T99'})]])
     child.cmd('write')
 
     eq(#child.calls('call-conduit maniphest.edit'), 0)
     eq(
-        last_notification(),
+        child.last_notification(),
         'arcanist.nvim: T5: this text is labelled T99. Delete the "Maniphest Task:" line to '
             .. 'push it elsewhere'
     )
@@ -407,7 +420,7 @@ T['a duplicate label refuses the write with a parse error'] = function()
     child.cmd('write')
 
     eq(#child.calls('call-conduit maniphest.edit'), 0)
-    eq(last_notification(), 'arcanist.nvim: failed to update T5: duplicate "Status:" label')
+    eq(child.last_notification(), 'arcanist.nvim: failed to update T5: duplicate "Status:" label')
 end
 
 T['revisiting a hidden buffer via :buffer does not refetch; :e! does'] = function()
