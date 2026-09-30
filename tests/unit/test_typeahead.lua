@@ -1,4 +1,4 @@
-local typeahead = require('arcanist.typeahead')
+local typeahead = require('arcanist.completion.typeahead')
 
 local T = MiniTest.new_set()
 local eq = MiniTest.expect.equality

@@ -1,4 +1,4 @@
-local fields_mod = require('arcanist.fields')
+local fields_mod = require('arcanist.object.fields')
 
 -- A title + two tight 'line' fields + a 'block' field + a trailing 'line'
 -- field, so render()'s three blank-line branches (prev is title, current is
@@ -179,8 +179,8 @@ T['render()/parse() round trip']['an empty-valued line field round-trips without
     -- vim.trim() strips that trailing space back off before M.parse() ever
     -- sees the line -- so the bare "Projects:" it's left matching has to be
     -- recognized as "this field, empty", not misparsed as prose with no
-    -- label at all (arcanist.fields.project_list's Projects field hits this
-    -- whenever a task/revision/wiki page has no tags).
+    -- label at all (arcanist.object.fields.project_list's Projects field hits
+    -- this whenever a task/revision/wiki page has no tags).
     local blank_fields = {
         { key = 'name', kind = 'title', read = function(f) return f.name end, write = fields_mod.TEXT },
         { key = 'projects', kind = 'line', label = 'Projects', read = function(f) return f.projects end, write = fields_mod.TEXT },

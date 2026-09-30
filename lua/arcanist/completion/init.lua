@@ -1,24 +1,24 @@
--- Completion for the fake in-process LSP client (arcanist.lsp):
+-- Completion for the fake in-process LSP client (arcanist.completion.lsp):
 -- @mention/#project sigils in any remarkup buffer, and Status/Priority
 -- values on their own line inside an editable "arcanist://T*" buffer.
 --
 -- Both sigils search on demand (Prefab.js's JX.TypeaheadOnDemandSource):
 -- each keystroke runs one debounced Conduit search, and only the newest
 -- response is kept. Status/Priority are short fixed lists with no search
--- behind them, so they preload once via arcanist.source.
+-- behind them, so they preload once via arcanist.arc.source.
 --
 -- Both sources match and rank candidates the way Phorge's typeahead
--- does (see arcanist.typeahead): the query is a prefix of some *word* of
--- the candidate -- for users the username and real name, for projects
--- the display name and every hashtag -- so "@linc" finds Abraham Lincoln
--- and "#qual" finds a project named "Quality Assurance", offering its
--- "qa" hashtag.
+-- does (see arcanist.completion.typeahead): the query is a prefix of some
+-- *word* of the candidate -- for users the username and real name, for
+-- projects the display name and every hashtag -- so "@linc" finds Abraham
+-- Lincoln and "#qual" finds a project named "Quality Assurance", offering
+-- its "qa" hashtag.
 
 local arcanist = require('arcanist')
-local conduit = require('arcanist.conduit')
+local conduit = require('arcanist.arc.conduit')
 local reference = require('arcanist.reference')
-local fields = require('arcanist.fields')
-local typeahead = require('arcanist.typeahead')
+local fields = require('arcanist.object.fields')
+local typeahead = require('arcanist.completion.typeahead')
 
 local KIND = vim.lsp.protocol.CompletionItemKind
 
@@ -34,8 +34,8 @@ local QUERY_DELAY_MS = 125
 -- typed text counts as the query" and "which candidates are even safe to
 -- offer". Mentions are PhabricatorMentionRemarkupRule's explicit
 -- username charset; hashtags share `fields.HASHTAG_CHAR` (ProjectRemarkupRule's
--- own charset -- see that module for why arcanist.fields, not here, is its
--- source of truth), so "#c++" and "#v1.0" query and complete fine. Real
+-- own charset -- see that module for why arcanist.object.fields, not here, is
+-- its source of truth), so "#c++" and "#v1.0" query and complete fine. Real
 -- slugs outside even that set (e.g. containing "/") are filtered out
 -- rather than offered and then not highlighted. Both patterns capture the
 -- sigil's byte position for the word-boundary check below.
@@ -319,8 +319,8 @@ end
 --- Completion candidates for the cursor at (0-indexed) `row`/`col` in
 --- `bufnr`, or nil if nothing applies there. Callback-based throughout --
 --- even the fully-cached sources call back through one -- so
---- `arcanist.lsp`'s textDocument/completion handler never blocks on a
---- cold cache and doesn't need to know which source is live vs cached;
+--- `arcanist.completion.lsp`'s textDocument/completion handler never blocks
+--- on a cold cache and doesn't need to know which source is live vs cached;
 --- `opts.live` is only there to set the LSP response's `isIncomplete`
 --- correctly (a live search should be re-run as more is typed; a cached
 --- list should just be filtered), and `opts.kind` picks the

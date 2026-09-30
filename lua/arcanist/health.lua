@@ -43,7 +43,7 @@ local function check_arc()
     -- A health check shouldn't sit for the full conduit_timeout.
     local timeout = math.min(require('arcanist').config.conduit_timeout, 5000)
     local ok, result, err =
-        require('arcanist.conduit').call_sync('user.whoami', {}, timeout)
+        require('arcanist.arc.conduit').call_sync('user.whoami', {}, timeout)
     if ok then
         local host = type(result.uri) == 'string' and result.uri:match('^%w+://([^/]+)')
         health.ok(

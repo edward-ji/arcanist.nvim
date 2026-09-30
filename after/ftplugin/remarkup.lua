@@ -56,6 +56,6 @@ vim.keymap.set('n', 'gf', function()
     end
 end, { buffer = true, desc = 'Preview a file monogram under the cursor, else built-in gf' })
 
--- Attach the "arcanist" LSP client (see lua/arcanist/lsp.lua for why), for
--- @mention / #project / field-value completion.
-require('arcanist.lsp').setup()
+-- Attach the "arcanist" LSP client (see lua/arcanist/completion/lsp.lua for
+-- why), for @mention / #project / field-value completion.
+require('arcanist.completion.lsp').setup()

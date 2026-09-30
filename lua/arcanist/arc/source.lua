@@ -2,9 +2,9 @@
 -- caches it by method and params -- Phorge's own "preloaded typeahead
 -- source" strategy (see JX.TypeaheadPreloadedSource), appropriate here for
 -- the same reason Phorge uses it there: small, fixed-ish lists with no
--- search behind them. Used by `arcanist.fields` for Status/Priority.
+-- search behind them. Used by `arcanist.object.fields` for Status/Priority.
 
-local conduit = require('arcanist.conduit')
+local conduit = require('arcanist.arc.conduit')
 
 local M = {}
 

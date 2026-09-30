@@ -144,7 +144,7 @@ M.config = default_config
 function M.setup(opts)
     M.config = vim.tbl_deep_extend('force', default_config, opts or {})
     if M.config.drafts.enabled then
-        require('arcanist.draft').register_filetype()
+        require('arcanist.object.draft').register_filetype()
     end
 end
 

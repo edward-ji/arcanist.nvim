@@ -10,8 +10,8 @@
 -- under the cursor (via the 'includeexpr' hook `M.gf()`, which resolves it
 -- with `M.at()`/`M.wiki_at()`), or `:ArcWrite`.
 --
--- Rendering and parsing are `arcanist.fields`' job -- see that module for
--- the plain-text format and why every declared field is fully editable.
+-- Rendering and parsing are `arcanist.object.fields`' job -- see that module
+-- for the plain-text format and why every declared field is fully editable.
 --
 -- HANDLERS (below) is the registry of supported object types; adding one
 -- there is what makes most features -- open/write/read/:ArcWrite, drafts --
@@ -19,11 +19,11 @@
 -- it still assumes a search result's own key is `obj.id`, which isn't true
 -- of every handler (see HANDLERS.W's own note).
 
-local conduit = require('arcanist.conduit')
-local draft = require('arcanist.draft')
-local fields = require('arcanist.fields')
+local conduit = require('arcanist.arc.conduit')
+local draft = require('arcanist.object.draft')
+local fields = require('arcanist.object.fields')
 local notify = require('arcanist.notify')
-local source = require('arcanist.source')
+local source = require('arcanist.arc.source')
 
 local M = {}
 
@@ -59,7 +59,7 @@ local M = {}
 --- which is what a document's "Last Modified:" line records.
 --- @field query_keys string[] This type's search engine's builtin queries.
 --- @field filters table<string, string> Filter word -> `constraints` key.
---- @field fields table[] The document schema (see arcanist.fields).
+--- @field fields table[] The document schema (see arcanist.object.fields).
 
 --- `params` for the common case: look an object up by its numeric id.
 --- Every handler here has a Projects field, so every handler's `params`
@@ -129,7 +129,7 @@ local function read_projects(_, obj)
 end
 
 --- One shared field-list entry, reused verbatim by every handler below --
---- nothing here varies per handler, and nothing in arcanist.fields ever
+--- nothing here varies per handler, and nothing in arcanist.object.fields ever
 --- mutates a field table in place (only `handler.fields`, the array it
 --- sits in, gets appended to), so sharing the one table instance is safe.
 local PROJECTS_FIELD = { key = 'projects.set', kind = 'line', label = 'Project Tags', write = PROJECTS, read = read_projects }
@@ -589,7 +589,7 @@ end
 --- Every handler's `params` requests the `projects` attachment, but Conduit
 --- only ever hands that back as bare PHIDs -- never the hashtag text a
 --- document round-trips as. This turns a `project.search` fetch (via
---- `arcanist.source`, so it's cached the same way Status/Priority are) for
+--- `arcanist.arc.source`, so it's cached the same way Status/Priority are) for
 --- those PHIDs into the tag list `read_projects` reads, in the same order
 --- as `phids`; a PHID the lookup couldn't explain (a failed request, or --
 --- in principle -- a project deleted between the two calls) is kept as-is

@@ -7,7 +7,7 @@
 -- inside a JSON envelope): `arc` streams the bytes straight to disk and
 -- reassembles chunked files, so nothing large passes through the editor.
 
-local conduit = require('arcanist.conduit')
+local conduit = require('arcanist.arc.conduit')
 local notify = require('arcanist.notify')
 
 local M = {}

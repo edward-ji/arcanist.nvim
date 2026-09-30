@@ -10,8 +10,8 @@
 -- a fuzzy picker renders it if the user has one bound, Neovim's own
 -- inputlist() if not.
 
-local conduit = require('arcanist.conduit')
-local fields = require('arcanist.fields')
+local conduit = require('arcanist.arc.conduit')
+local fields = require('arcanist.object.fields')
 local notify = require('arcanist.notify')
 local reference = require('arcanist.reference')
 
@@ -31,7 +31,7 @@ local VIEWER = { word = 'me', token = 'viewer()' }
 
 --- One Phorge page, which is also Phorge's ceiling: Conduit rejects any
 --- limit above 100 with ERR-INVALID-PAGE-SIZE, so `limit` can only be
---- lowered. Unlike arcanist.source this deliberately does not follow the
+--- lowered. Unlike arcanist.arc.source this deliberately does not follow the
 --- cursor -- a picker is for finding something you can already name, and
 --- truncation gets reported rather than hidden.
 local DEFAULT_LIMIT = 100

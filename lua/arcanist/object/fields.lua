@@ -28,8 +28,8 @@
 -- only moves via accept/reject/abandon, never a settable value) is left
 -- out of the field list rather than shown and then rejected.
 
-local conduit = require('arcanist.conduit')
-local source = require('arcanist.source')
+local conduit = require('arcanist.arc.conduit')
+local source = require('arcanist.arc.source')
 
 local M = {}
 
@@ -107,7 +107,7 @@ M.TEXT = {
 --- rather than a hardcoded list -- e.g. a task's Status/Priority are both
 --- admin-configurable per instance. `method`'s response is fetched once per
 --- session (the lists are small and rarely change) and cached via
---- `arcanist.source`, shared across every field (and completion) that uses
+--- `arcanist.arc.source`, shared across every field (and completion) that uses
 --- the same source. `value`/`display` read one item from the response;
 --- `aliases` lists every spelling that should resolve to it (so both the
 --- display name and any write keyword work as input).
