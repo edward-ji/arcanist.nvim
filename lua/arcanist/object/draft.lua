@@ -5,8 +5,8 @@
 -- self-describing -- its identity line names the object -- so nothing else is
 -- stored beside it; `register_filetype()` is what makes it Remarkup.
 --
--- Pure file I/O here: no Conduit, no field schema. arcanist.reference owns the
--- policy of when to seed a draft and when to read one back.
+-- Pure file I/O here: no Conduit, no field schema. arcanist.object.scheme
+-- owns the policy of when to seed a draft and when to read one back.
 
 local M = {}
 

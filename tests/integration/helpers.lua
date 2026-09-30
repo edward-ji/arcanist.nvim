@@ -149,9 +149,9 @@ end
 Helpers.MODIFIED = 1790000000
 
 --- A `maniphest.search`-shaped response envelope for one task, matching
---- what HANDLERS.T's fields read from (lua/arcanist/reference.lua).
+--- what HANDLERS.T's fields read from (lua/arcanist/object/types.lua).
 --- `projects` (project PHIDs) is the one field that isn't rendered from
---- this response alone -- see `resolve_projects` in reference.lua.
+--- this response alone -- see `resolve_projects` in object/types.lua.
 --- @param opts { id: integer, title: string, status: string?, priority: string?, description: string?, projects: string[]?, modified: integer? }
 --- @return table
 function Helpers.task_response(opts)

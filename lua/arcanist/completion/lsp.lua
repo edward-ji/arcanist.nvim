@@ -8,7 +8,6 @@
 -- arcanist.completion, so there's no document to keep synced --
 -- textDocument/didOpen and didChange are accepted and ignored.
 
-local reference = require('arcanist.reference')
 local completion = require('arcanist.completion')
 
 local M = {}
@@ -123,7 +122,7 @@ end
 --- @param bufnr integer?
 function M.setup(bufnr)
     bufnr = bufnr or vim.api.nvim_get_current_buf()
-    reference.setup()
+    require('arcanist.object.scheme').setup()
 
     vim.lsp.start({
         name = 'arcanist',

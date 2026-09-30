@@ -16,8 +16,8 @@
 
 local arcanist = require('arcanist')
 local conduit = require('arcanist.arc.conduit')
-local reference = require('arcanist.reference')
 local fields = require('arcanist.object.fields')
+local types = require('arcanist.object.types')
 local typeahead = require('arcanist.completion.typeahead')
 
 local KIND = vim.lsp.protocol.CompletionItemKind
@@ -351,7 +351,7 @@ function M.items_at(bufnr, row, col, callback)
         return
     end
 
-    local handler = reference.handler_for(bufnr)
+    local handler = types.handler_for(bufnr)
     if not handler then
         callback(nil)
         return

@@ -12,7 +12,7 @@ if vim.g.loaded_arcanist then
 end
 vim.g.loaded_arcanist = true
 
-require('arcanist.reference').setup()
+require('arcanist.object.scheme').setup()
 
 -- The "gitcommit -> remarkup" reclassification, gated on "detect.gitcommit"
 -- -- same startup-vs-after/ftplugin reason as above, and it has to be a

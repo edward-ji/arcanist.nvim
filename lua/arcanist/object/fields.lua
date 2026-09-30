@@ -247,7 +247,7 @@ end
 --- a run of consecutive 'line' fields stays tight ("Status:" directly
 --- above "Priority:"), while blocks, the title, and any field marked
 --- `separate = true` (the identity trailer every handler ends with -- see
---- reference.lua) are always separated from whatever precedes/follows
+--- object/types.lua) are always separated from whatever precedes/follows
 --- them. That keeps the layout consistent for any future field list
 --- without adding another rule per handler.
 --- @param fields table[]

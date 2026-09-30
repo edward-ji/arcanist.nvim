@@ -1,5 +1,5 @@
 -- The ":ArcLint", ":ArcList" and ":ArcFile" user commands. CamelCase matches
--- the ":ArcWrite" already registered by reference.lua (and
+-- the ":ArcWrite" already registered by object/scheme.lua (and
 -- ":Inspect"/":InspectTree" in Neovim's own runtime).
 
 local M = {}
@@ -194,7 +194,7 @@ local function parse_list(fargs)
 
     -- Both are optional, so a lone word is whichever of the two it names.
     local query_key, type_name = words[1], words[2]
-    if #words == 1 and require('arcanist.reference').type_named(words[1]) then
+    if #words == 1 and require('arcanist.object.types').type_named(words[1]) then
         query_key, type_name = nil, words[1]
     end
 
@@ -203,13 +203,13 @@ end
 
 --- The filter words `type_word` accepts, or every type's when no type is
 --- settled yet -- the same union the query keys get offered as.
---- @param reference table
+--- @param types table
 --- @param type_word string?
 --- @return string[]
-local function filter_keys(reference, type_word)
+local function filter_keys(types, type_word)
     local keys = {}
-    for _, name in ipairs(type_word and { type_word } or reference.types()) do
-        for key in pairs(reference.type_named(name).handler.filters) do
+    for _, name in ipairs(type_word and { type_word } or types.types()) do
+        for key in pairs(types.type_named(name).handler.filters) do
             keys[key] = true
         end
     end
@@ -230,7 +230,7 @@ end
 --- @param cursor_pos integer
 --- @return string[]
 local function complete_list(arg_lead, cmd_line, cursor_pos)
-    local reference = require('arcanist.reference')
+    local types = require('arcanist.object.types')
 
     local words = vim.split(vim.trim(cmd_line:sub(1, cursor_pos)), '%s+')
     if arg_lead ~= '' then
@@ -247,7 +247,7 @@ local function complete_list(arg_lead, cmd_line, cursor_pos)
             used[name] = true
         else
             settled[#settled + 1] = word
-            if reference.type_named(word) then
+            if types.type_named(word) then
                 type_word = word
             end
         end
@@ -255,7 +255,7 @@ local function complete_list(arg_lead, cmd_line, cursor_pos)
 
     local keys = vim.tbl_filter(function(key)
         return not used[key]
-    end, filter_keys(reference, type_word))
+    end, filter_keys(types, type_word))
 
     -- Past the "=" a username is all that can follow, and only the viewer
     -- has a spelling this can know without asking Conduit.
@@ -274,8 +274,8 @@ local function complete_list(arg_lead, cmd_line, cursor_pos)
         -- Grouped rather than interleaved: the two answer different
         -- questions, and mixing them makes the menu read as noise.
         local query_keys = {}
-        for _, name in ipairs(reference.types()) do
-            local handler = reference.type_named(name).handler
+        for _, name in ipairs(types.types()) do
+            local handler = types.type_named(name).handler
             candidates[#candidates + 1] = handler.plural
             for _, key in ipairs(handler.query_keys) do
                 query_keys[key] = true
@@ -285,8 +285,8 @@ local function complete_list(arg_lead, cmd_line, cursor_pos)
         table.sort(query_keys)
         vim.list_extend(candidates, query_keys)
     elseif #settled == 1 and not type_word then
-        for _, name in ipairs(reference.types()) do
-            local handler = reference.type_named(name).handler
+        for _, name in ipairs(types.types()) do
+            local handler = types.type_named(name).handler
             if vim.list_contains(handler.query_keys, settled[1]) then
                 candidates[#candidates + 1] = handler.plural
             end

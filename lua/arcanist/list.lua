@@ -13,7 +13,7 @@
 local conduit = require('arcanist.arc.conduit')
 local fields = require('arcanist.object.fields')
 local notify = require('arcanist.notify')
-local reference = require('arcanist.reference')
+local types = require('arcanist.object.types')
 
 local M = {}
 
@@ -42,13 +42,13 @@ local DEFAULT_LIMIT = 100
 --- @return string? err
 local function resolve_type(want)
     local name = want or DEFAULT_TYPE
-    local entry = reference.type_named(name)
+    local entry = types.type_named(name)
     if not entry then
         return nil,
             string.format(
                 '%q is not a type -- expected one of: %s',
                 name,
-                table.concat(reference.types(), ', ')
+                table.concat(types.types(), ', ')
             )
     end
     return entry
@@ -147,9 +147,9 @@ end
 --- @field type? string Type to list -- "task"/"revision", or their plurals.
 --- Defaults to "revisions".
 --- @field query_key? string One of the type's builtin Phorge queries (see
---- HANDLERS in arcanist.reference). Defaults to "all".
+--- HANDLERS in arcanist.object.types). Defaults to "all".
 --- @field filters? table<string, string[]> Users to narrow to, keyed by one
---- of the type's filters (see HANDLERS in arcanist.reference). "me" stands
+--- of the type's filters (see HANDLERS in arcanist.object.types). "me" stands
 --- for whoever is logged in.
 --- @field limit? integer Results to fetch. Defaults to 100.
 
@@ -261,7 +261,7 @@ function M.list(opts)
                 preview_item = preview_item,
             }, function(item)
                 if item then
-                    vim.cmd.edit(reference.uri(entry.prefix, item.obj.id))
+                    vim.cmd.edit(types.uri(entry.prefix, item.obj.id))
                 end
             end)
         end

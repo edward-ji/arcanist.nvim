@@ -130,7 +130,7 @@ end
 T[':write sends exactly the changed field, and clears modified'] = function()
     -- maniphest.search is called three times across a normal (non-bang)
     -- :write: the initial load, push()'s pre-write conflict check, and its
-    -- post-write baseline refresh (lua/arcanist/reference.lua's push()).
+    -- post-write baseline refresh (lua/arcanist/object/push.lua).
     child.fixture('call-conduit maniphest.search', {
         __sequence = {
             helpers.task_response({ id = 5, title = 'Fix bug' }),
