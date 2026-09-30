@@ -1,6 +1,5 @@
--- The ":ArcLint", ":ArcList" and ":ArcFile" user commands. CamelCase matches
--- the ":ArcWrite" already registered by object/scheme.lua (and
--- ":Inspect"/":InspectTree" in Neovim's own runtime).
+-- The ":ArcWrite", ":ArcLint", ":ArcList" and ":ArcFile" user commands.
+-- CamelCase matches ":Inspect"/":InspectTree" in Neovim's own runtime.
 
 local M = {}
 
@@ -309,6 +308,17 @@ function M.setup()
         return
     end
     installed = true
+
+    vim.api.nvim_create_user_command('ArcWrite', function(args)
+        require('arcanist.object.push').command(args)
+    end, {
+        nargs = '?',
+        bang = true,
+        desc = 'Push the current buffer to a Phorge task/revision (defaults to the current '
+            .. 'buffer\'s own reference). Unlike ":w arcanist://T123", works even if that '
+            .. 'reference\'s own buffer is already open elsewhere. "!" overwrites even if the '
+            .. 'object changed on the server since it was loaded.',
+    })
 
     vim.api.nvim_create_user_command('ArcLint', function(args)
         -- Required here rather than at module load: registering the command

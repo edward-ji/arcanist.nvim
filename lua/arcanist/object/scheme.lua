@@ -237,8 +237,8 @@ local installed = false
 
 --- Install the "arcanist://" buffer scheme handlers. Idempotent -- safe to
 --- call from plugin/ at startup and again from every remarkup buffer, but
---- only does anything the first time: the autocmds and ":ArcWrite" are
---- session-wide, and nothing about them is per-buffer.
+--- only does anything the first time: the autocmds are session-wide, and
+--- nothing about them is per-buffer.
 function M.setup()
     if installed then
         return
@@ -309,15 +309,6 @@ function M.setup()
         callback = function(args)
             scheme_buffer(args.buf, true)
         end,
-    })
-
-    vim.api.nvim_create_user_command('ArcWrite', push.command, {
-        nargs = '?',
-        bang = true,
-        desc = 'Push the current buffer to a Phorge task/revision (defaults to the current '
-            .. 'buffer\'s own reference). Unlike ":w arcanist://T123", works even if that '
-            .. 'reference\'s own buffer is already open elsewhere. "!" overwrites even if the '
-            .. 'object changed on the server since it was loaded.',
     })
 end
 
