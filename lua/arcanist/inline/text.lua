@@ -168,6 +168,15 @@ local function set_revealed(buf, st, want, row, col)
     })
 end
 
+--- Whether the 0-indexed position `row`/`col` lies in the end-exclusive
+--- range from `sr`/`sc` to `er`/`ec`.
+--- @return boolean
+local function contains(sr, sc, er, ec, row, col)
+    local after_start = row > sr or (row == sr and col >= sc)
+    local before_end = row < er or (row == er and col < ec)
+    return after_start and before_end
+end
+
 --- Single per-session `CursorMoved`/`CursorMovedI` dispatcher for every
 --- "text" placement in `buf`, replacing what would otherwise be one
 --- autocmd per placement. Checks the cursor against each placement's own
@@ -201,19 +210,7 @@ local function sync_text_reveal(buf)
         local cm, tm = st.conceal_id and by_id[st.conceal_id], st.text_id and by_id[st.text_id]
         if cm and tm and not cm[4].invalid then
             local row, col, details = cm[2], cm[3], cm[4]
-            local er2, ec2 = details.end_row or row, details.end_col or col
-            local inside
-            if crow < row or crow > er2 then
-                inside = false
-            elseif row == er2 then
-                inside = ccol >= col and ccol < ec2
-            elseif crow == row then
-                inside = ccol >= col
-            elseif crow == er2 then
-                inside = ccol < ec2
-            else
-                inside = true
-            end
+            local inside = contains(row, col, details.end_row or row, details.end_col or col, crow, ccol)
             if inside ~= st.revealed then
                 set_revealed(buf, st, inside, tm[2], tm[3])
             end
