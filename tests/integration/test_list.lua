@@ -83,4 +83,24 @@ T[':ArcList with a filter given twice says so'] = function()
     eq(#child.calls(), 0)
 end
 
+T[':ArcList wikis names the root page w/ and opens it'] = function()
+    child.fixture(
+        'call-conduit phriction.document.search',
+        helpers.wiki_response({ id = 1, slug = '/', title = 'Wiki Home' })
+    )
+    child.lua([[vim.ui.select = function(items, opts, on_choice)
+        _G.__shown = opts.format_item(items[1])
+        on_choice(items[1])
+    end]])
+
+    child.cmd('enew')
+    child.cmd('ArcList wikis')
+    child.wait_until('vim.b[0].arcanist_loaded ~= nil')
+
+    eq(child.lua_get('_G.__shown'), 'w/    Wiki Home')
+    eq(child.lua_get('vim.api.nvim_buf_get_name(0)'), 'arcanist://w/')
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, -2, -1, false)')[1], 'Wiki Document: w/')
+    eq(child.calls('call-conduit phriction.document.search')[2].params.constraints.paths, { '/' })
+end
+
 return T

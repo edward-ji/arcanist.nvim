@@ -66,7 +66,7 @@ end
 --- @return string
 function M.path(ref)
     local segments = vim.split(ref, '/', { plain = true, trimempty = true })
-    if #segments > 1 then
+    if ref:find('/', 1, true) then
         segments[#segments] = segments[#segments] .. '#'
     end
     return resolved(vim.fs.joinpath(config().dir, table.concat(segments, '/')))

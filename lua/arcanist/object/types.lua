@@ -184,6 +184,17 @@ local function monogram_handler(letter, edit_method)
     }
 end
 
+--- The non-empty `/`-separated segments of a slug or path.
+--- @param path string
+--- @return string[]
+local function slug_segments(path)
+    local segments = {}
+    for segment in path:gmatch('[^/]+') do
+        segments[#segments + 1] = segment
+    end
+    return segments
+end
+
 --- A wiki slug as Phorge stores it: trimmed, duplicate `/`s collapsed, no
 --- leading `/`, exactly one trailing `/`. `phriction.document.search`'s
 --- `paths` constraint matches this raw and unnormalized, unlike
@@ -191,8 +202,7 @@ end
 --- @param target string
 --- @return string slug
 local function normalize_slug(target)
-    local slug = vim.trim(target):gsub('/+', '/'):gsub('^/', ''):gsub('/*$', '')
-    return slug .. '/'
+    return table.concat(slug_segments(vim.trim(target)), '/') .. '/'
 end
 
 --- @type table<string, arcanist.Handler>
@@ -326,7 +336,11 @@ local HANDLERS = {
         end,
         attachments = { content = true, projects = true },
         format = function(key)
-            return 'w/' .. key
+            local ref = 'w'
+            for _, segment in ipairs(slug_segments(key)) do
+                ref = ref .. '/' .. segment
+            end
+            return ref .. '/'
         end,
         -- Normalized (see normalize_slug above): every entry point (gf,
         -- :ArcWrite, push()'s own is_own/identity checks) sees the same
@@ -693,6 +707,7 @@ M.iso8601 = iso8601
 M.parse_ref = parse_ref
 M.parse_uri = parse_uri
 M.resolve_handler = resolve_handler
+M.slug_segments = slug_segments
 M.normalize_slug = normalize_slug
 M.fetch = fetch
 M.fetch_sync = fetch_sync

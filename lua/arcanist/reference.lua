@@ -222,19 +222,6 @@ local function is_uri(target)
         or target:match('^tel:') ~= nil
 end
 
---- Collapse a run of possibly-empty, `/`-separated path segments the way
---- `table.concat` would want them, dropping trailing slashes first so
---- splitting never yields a bogus empty final segment.
---- @param path string
---- @return string[]
-local function path_segments(path)
-    local segments = {}
-    for segment in path:gsub('/+$', ''):gmatch('[^/]+') do
-        segments[#segments + 1] = segment
-    end
-    return segments
-end
-
 --- Resolve a `./`/`../`-relative wiki_link `target` against `base` (the
 --- current buffer's own slug), the same segment-by-segment walk Phorge's
 --- own `PhrictionRemarkupRule::markupDocumentLink` does. Only meaningful
@@ -243,8 +230,8 @@ end
 --- @param base string
 --- @return string slug
 local function resolve_relative(target, base)
-    local parts = path_segments(base)
-    for _, part in ipairs(path_segments(target)) do
+    local parts = types.slug_segments(base)
+    for _, part in ipairs(types.slug_segments(target)) do
         if part == '.' then
             -- consumed, contributes nothing
         elseif part == '..' then

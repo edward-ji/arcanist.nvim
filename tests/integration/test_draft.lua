@@ -257,4 +257,21 @@ T['gf on a relative wiki link resolves from a draft buffer, not just a live one'
     eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, 1, false)')[1], 'Setup')
 end
 
+T['the wiki root and a page under it each get their own draft'] = function()
+    child.fixture('call-conduit phriction.document.search', {
+        __sequence = {
+            helpers.wiki_response({ id = 1, slug = '/', title = 'Wiki Home' }),
+            helpers.wiki_response({ id = 9, slug = 'engineering/', title = 'Engineering' }),
+        },
+    })
+
+    child.cmd('edit arcanist://w/')
+    child.wait_until(string.format('vim.api.nvim_buf_get_name(0) == %q', drafts_dir .. '/w#'))
+    child.cmd('edit arcanist://w/engineering/')
+    child.wait_until(string.format('vim.api.nvim_buf_get_name(0) == %q', drafts_dir .. '/w/engineering#'))
+
+    eq(vim.fn.readfile(drafts_dir .. '/w#')[1], 'Wiki Home')
+    eq(vim.fn.readfile(drafts_dir .. '/w/engineering#')[1], 'Engineering')
+end
+
 return T
