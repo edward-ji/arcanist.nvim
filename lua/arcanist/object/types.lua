@@ -54,7 +54,7 @@ local M = {}
 --- which is what a document's "Last Modified:" line records.
 --- @field query_keys string[] This type's search engine's builtin queries.
 --- @field filters table<string, string> Filter word -> `constraints` key.
---- @field fields table[] The document schema (see arcanist.object.fields).
+--- @field fields arcanist.Field[] The document schema (see arcanist.object.fields).
 
 --- `constraints` for the common case: look an object up by its numeric id.
 --- @param id integer

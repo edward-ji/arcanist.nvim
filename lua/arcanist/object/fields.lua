@@ -33,6 +33,15 @@ local source = require('arcanist.arc.source')
 
 local M = {}
 
+--- One entry of a field list, as described at the top of this module.
+--- @class arcanist.Field
+--- @field key string
+--- @field kind "title"|"line"|"block"
+--- @field label string?
+--- @field read fun(fields: table, obj: table): string?
+--- @field write arcanist.Write?
+--- @field separate boolean? Blank-separate it from what precedes it (see M.render).
+
 --- A hashtag's charset, sitting inside a "#..." token -- ProjectRemarkupRule's
 --- own *negative* set (anything but whitespace and `?!,:;{}#()"'*/~`, no edge
 --- "."), so "#c++" and "#v1.0" both parse whole. Shared with
@@ -250,7 +259,7 @@ end
 --- object/types.lua) are always separated from whatever precedes/follows
 --- them. That keeps the layout consistent for any future field list
 --- without adding another rule per handler.
---- @param fields table[]
+--- @param fields arcanist.Field[]
 --- @param obj table
 --- @return string[]
 function M.render(fields, obj)
@@ -284,7 +293,7 @@ end
 --- through `M.render`/`M.parse` rather than a third hand-written copy of
 --- the per-`kind` formatting rules. Used as the "did this field change"
 --- baseline the write path diffs edits against.
---- @param fields table[]
+--- @param fields arcanist.Field[]
 --- @param obj table
 --- @return table<string,string>
 function M.raw_values(fields, obj)
@@ -303,7 +312,7 @@ end
 --- multi-paragraph fields work -- a blank line never ends one, only
 --- another label does. An unrecognized "Foo:" line is just content, so
 --- prose containing "Note:" is untouched.
---- @param fields table[]
+--- @param fields arcanist.Field[]
 --- @param lines string[]
 --- @return table<string,string>? values
 --- @return string? err
@@ -380,7 +389,7 @@ end
 --- Read an object's one-line name through this rather than reaching into
 --- it: a task's title lives at `fields.name`, a revision's at
 --- `fields.title`, and knowing that difference is this module's job.
---- @param fields table[]
+--- @param fields arcanist.Field[]
 --- @return table
 function M.title_field(fields)
     for _, field in ipairs(fields) do
@@ -398,7 +407,7 @@ end
 --- byte offset, so it doesn't trim first. Returns the length alongside
 --- the field (rather than making callers redo `#field.label + 2`) so
 --- there's one place that knows the "Label: " separator is two bytes.
---- @param fields table[]
+--- @param fields arcanist.Field[]
 --- @param line string
 --- @return table? field
 --- @return integer? prefix_len
@@ -415,7 +424,7 @@ end
 
 --- Turn one field's raw parsed text into the value its Conduit transaction
 --- should carry.
---- @param field table
+--- @param field arcanist.Field
 --- @param raw string
 --- @return string? value
 --- @return string? err
@@ -426,7 +435,7 @@ end
 --- Whether `raw` (freshly parsed) differs from `loaded` (the baseline
 --- recorded at load or after the last push) meaningfully enough to need
 --- resending.
---- @param field table
+--- @param field arcanist.Field
 --- @param loaded string?
 --- @param raw string
 --- @return boolean
