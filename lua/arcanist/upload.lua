@@ -9,6 +9,7 @@
 -- mid-upload feedback at all).
 
 local arc = require('arcanist.arc')
+local notify = require('arcanist.notify')
 
 local M = {}
 
@@ -26,7 +27,7 @@ function M.upload(path, callback)
     --- to clean up after themselves.
     --- @param msg string
     local function fail(msg)
-        vim.notify(string.format('arcanist.nvim: upload of %s failed: %s', path, msg), vim.log.levels.ERROR)
+        notify.err(string.format('upload of %s failed: %s', path, msg))
         callback(false, msg)
     end
 

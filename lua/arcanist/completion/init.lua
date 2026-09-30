@@ -17,6 +17,7 @@
 local arcanist = require('arcanist')
 local conduit = require('arcanist.arc.conduit')
 local fields = require('arcanist.object.fields')
+local notify = require('arcanist.notify')
 local types = require('arcanist.object.types')
 local typeahead = require('arcanist.completion.typeahead')
 
@@ -83,7 +84,7 @@ local function report_failure(sigil, err)
     local msg = string.format('%s completion failed: %s', sigil, err or 'unknown error')
     if msg ~= last_failure then
         last_failure = msg
-        vim.notify('arcanist.nvim: ' .. msg, vim.log.levels.WARN)
+        notify.warn(msg)
     end
 end
 

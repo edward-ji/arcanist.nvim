@@ -19,11 +19,8 @@ vim.opt_local.comments = 'fb:*,fb:-,n:>'
 -- doesn't throw at every startup.
 local ok, err = pcall(vim.treesitter.start)
 if not ok then
-    vim.notify(
-        'arcanist.nvim: remarkup parser not built -- run `make` in the plugin directory ('
-            .. tostring(err)
-            .. ')',
-        vim.log.levels.WARN
+    require('arcanist.notify').warn(
+        'remarkup parser not built -- run `make` in the plugin directory (' .. tostring(err) .. ')'
     )
 end
 

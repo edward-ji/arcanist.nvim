@@ -6,6 +6,7 @@
 -- in favor of a vim.notify error.
 
 local arcanist = require('arcanist')
+local notify = require('arcanist.notify')
 local upload = require('arcanist.upload')
 
 local M = {}
@@ -39,10 +40,7 @@ local function abandon(bufnr)
     end
 
     if cancelled > 0 then
-        vim.notify(
-            string.format('arcanist.nvim: buffer unloaded -- cancelled %d upload(s)', cancelled),
-            vim.log.levels.WARN
-        )
+        notify.warn(string.format('buffer unloaded -- cancelled %d upload(s)', cancelled))
     end
 end
 
@@ -252,10 +250,7 @@ local function start_upload(bufnr, path, mode)
         local replacement = ok and ('{' .. result .. '}') or ''
         local edited = pcall(vim.api.nvim_buf_set_text, bufnr, srow, scol, erow, ecol, { replacement })
         if not edited and ok then
-            vim.notify(
-                string.format('arcanist.nvim: uploaded %s as {%s}, but the buffer could not be edited', path, result),
-                vim.log.levels.WARN
-            )
+            notify.warn(string.format('uploaded %s as {%s}, but the buffer could not be edited', path, result))
         end
     end)
     -- `arc` failing to spawn at all calls back synchronously, before there

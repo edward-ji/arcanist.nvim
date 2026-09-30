@@ -1,6 +1,5 @@
 -- The "arcanist.nvim: " prefix every module's messages carry, so they all
--- look like they came from the same plugin. (arcanist.paste, .upload,
--- .completion and the ftplugin still spell it inline -- not yet moved.)
+-- look like they came from the same plugin.
 --
 -- One function per level rather than one taking a level: three levels are
 -- all this has ever needed, and naming them keeps `vim.log.levels` out of
