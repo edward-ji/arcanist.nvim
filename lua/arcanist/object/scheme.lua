@@ -5,7 +5,6 @@
 -- under the cursor (via arcanist.reference's 'includeexpr' hook), or
 -- `:ArcWrite`.
 
-local conduit = require('arcanist.arc.conduit')
 local draft = require('arcanist.object.draft')
 local fields = require('arcanist.object.fields')
 local notify = require('arcanist.notify')
@@ -140,12 +139,12 @@ local function load_reference(bufnr, handler, prefix, key, overwrite)
     -- Post waits for the fetch: it means "this buffer now holds the object".
     vim.api.nvim_exec_autocmds('BufReadPre', { buffer = bufnr })
 
-    conduit.call(handler.search, handler.params(key), function(ok, response, err)
+    types.fetch(handler, key, function(obj, err)
         if not vim.api.nvim_buf_is_valid(bufnr) then
             return
         end
 
-        if not ok then
+        if err then
             -- Content, not just the "loading" state, might be stale here --
             -- this fetch could be a reload of a previously-loaded buffer --
             -- so it's explicitly cleared rather than left as-is.
@@ -154,44 +153,32 @@ local function load_reference(bufnr, handler, prefix, key, overwrite)
             return
         end
 
-        local obj = response.data[1]
         if not obj then
             set_lines(bufnr, {}, false)
             notify.err(string.format('%s not found', ref))
             return
         end
 
-        -- One more round trip before render() can run: the `projects`
-        -- attachment above is bare PHIDs, and read_projects needs the
-        -- hashtags they resolve to (see resolve_projects). Chained rather
-        -- than fetched alongside, so a Projects-free object (no PHIDs to
-        -- resolve) never pays for it.
-        types.resolve_projects(obj, function()
-            if not vim.api.nvim_buf_is_valid(bufnr) then
+        local rendered = fields.render(handler.fields, obj)
+
+        if draft.enabled() then
+            local wrote, write_err = draft.write(ref, rendered)
+            if not wrote then
+                set_lines(bufnr, {}, false)
+                notify.err(write_err)
                 return
             end
+            redirect_to_draft(bufnr, ref, overwrite)
+            return
+        end
 
-            local rendered = fields.render(handler.fields, obj)
-
-            if draft.enabled() then
-                local wrote, write_err = draft.write(ref, rendered)
-                if not wrote then
-                    set_lines(bufnr, {}, false)
-                    notify.err(write_err)
-                    return
-                end
-                redirect_to_draft(bufnr, ref, overwrite)
-                return
-            end
-
-            vim.bo[bufnr].filetype = handler.filetype
-            set_lines(bufnr, rendered, true)
-            vim.b[bufnr].arcanist_loaded = {
-                ref = ref,
-                values = fields.raw_values(handler.fields, obj),
-            }
-            vim.api.nvim_exec_autocmds('BufReadPost', { buffer = bufnr })
-        end)
+        vim.bo[bufnr].filetype = handler.filetype
+        set_lines(bufnr, rendered, true)
+        vim.b[bufnr].arcanist_loaded = {
+            ref = ref,
+            values = fields.raw_values(handler.fields, obj),
+        }
+        vim.api.nvim_exec_autocmds('BufReadPost', { buffer = bufnr })
     end)
 end
 

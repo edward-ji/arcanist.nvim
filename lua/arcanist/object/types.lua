@@ -594,8 +594,8 @@ local function tags_from_projects(items, phids)
 end
 
 --- Populate `obj._project_tags` (read_projects' own input) by resolving its
---- `attachments.projects.projectPHIDs`, if any -- async, so `load_reference`
---- can chain it after `handler.search` without ever blocking the editor.
+--- `attachments.projects.projectPHIDs`, if any -- async, so `fetch` can
+--- chain it after `handler.search` without ever blocking the editor.
 --- @param obj table
 --- @param callback fun()
 local function resolve_projects(obj, callback)
@@ -642,6 +642,33 @@ local function fetch_sync(handler, key)
     return obj, nil
 end
 
+--- `fetch_sync`, without blocking the editor. `callback` runs on the main
+--- loop with the object, or nil and no error if there is no such object.
+--- @param handler table one of HANDLERS' values
+--- @param key integer|string
+--- @param callback fun(obj: table?, err: string?)
+local function fetch(handler, key, callback)
+    conduit.call(handler.search, handler.params(key), function(ok, response, err)
+        if not ok then
+            callback(nil, err)
+            return
+        end
+        local obj = response.data[1]
+        if not obj then
+            callback(nil, nil)
+            return
+        end
+        -- One more round trip before the object can be rendered: the
+        -- `projects` attachment is bare PHIDs, and read_projects needs the
+        -- hashtags they resolve to (see resolve_projects). Chained rather
+        -- than fetched alongside, so a Projects-free object (no PHIDs to
+        -- resolve) never pays for it.
+        resolve_projects(obj, function()
+            callback(obj, nil)
+        end)
+    end)
+end
+
 --- The HANDLERS entry for monogram prefix `prefix`, or nil.
 --- @param prefix string
 --- @return table? handler
@@ -663,7 +690,7 @@ M.parse_ref = parse_ref
 M.parse_uri = parse_uri
 M.resolve_handler = resolve_handler
 M.normalize_slug = normalize_slug
-M.resolve_projects = resolve_projects
+M.fetch = fetch
 M.fetch_sync = fetch_sync
 
 return M
