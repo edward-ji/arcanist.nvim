@@ -101,4 +101,16 @@ T[':ArcLint rejects a reserved flag before spawning anything'] = function()
     eq(#child.calls(), 0) -- never even spawned the fake arc
 end
 
+T[':ArcLint without arc on PATH says it could not start'] = function()
+    child.lua([[vim.env.PATH = '']])
+
+    child.cmd('enew')
+    child.cmd('ArcLint')
+    child.wait_for_notification('ENOENT')
+
+    local said = messages_containing('ENOENT')
+    eq(#said, 1)
+    eq(vim.startswith(said[1], 'arcanist.nvim: arc lint: '), true)
+end
+
 return T

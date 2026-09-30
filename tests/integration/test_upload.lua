@@ -67,4 +67,19 @@ T['cancelling an upload stops its callback from firing'] = function()
     eq(child.lua_get('_G.__result == nil'), true)
 end
 
+T['upload() without arc on PATH fails instead of throwing'] = function()
+    child.lua([[vim.env.PATH = '']])
+
+    child.lua([[
+        require('arcanist.upload').upload('/tmp/duck.png', function(ok, result)
+            _G.__result = { ok, result }
+        end)
+    ]])
+    child.wait_until('_G.__result ~= nil')
+
+    local result = child.lua_get('_G.__result')
+    eq(result[1], false)
+    eq(result[2]:find('ENOENT', 1, true) ~= nil, true)
+end
+
 return T
