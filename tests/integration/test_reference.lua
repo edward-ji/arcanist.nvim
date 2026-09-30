@@ -524,4 +524,141 @@ T['opening a wiki slug without its trailing slash still resolves and writes'] = 
     eq(edits[1].params.slug, 'engineering/onboarding/')
 end
 
+--- Open a scratch file holding `lines` as a Remarkup buffer.
+--- @param lines string[]
+local function edit_remarkup(lines)
+    local path = child.dir .. '/probe.rm'
+    vim.fn.writefile(lines, path)
+    child.cmd('edit ' .. path)
+    child.lua([[vim.bo.filetype = 'remarkup']])
+end
+
+T[':read inserts an object\'s document below the cursor line'] = function()
+    child.fixture('call-conduit maniphest.search', helpers.task_response({ id = 5, title = 'Fix bug' }))
+    edit_remarkup({ 'Notes:', 'end' })
+
+    child.cmd('1read arcanist://T5')
+
+    local lines = child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)')
+    eq(lines[1], 'Notes:')
+    eq(lines[2], 'Fix bug')
+    eq(lines[#lines - 1], 'Last Modified: 2026-09-21T14:13:20Z')
+    eq(lines[#lines], 'end')
+    eq(child.lua_get('vim.fn.line("\'[")'), 2)
+    eq(child.lua_get('vim.fn.line("\']")'), #lines - 1)
+end
+
+T['writing part of a buffer to an arcanist:// target is refused'] = function()
+    child.capture_notify()
+    edit_remarkup({ 'Fix bug', '', 'Status: Open' })
+
+    child.cmd('1,2write arcanist://T5')
+
+    eq(#child.calls('call-conduit maniphest.edit'), 0)
+    eq(
+        child.last_notification(),
+        'arcanist.nvim: cannot write part of a buffer to T5 -- a document is written whole, '
+            .. 'with ":w arcanist://T5" or ":ArcWrite"'
+    )
+end
+
+T[':saveas turns an arcanist:// buffer into an ordinary file'] = function()
+    child.fixture('call-conduit maniphest.search', helpers.task_response({ id = 5, title = 'Fix bug' }))
+    open('T5')
+
+    local path = child.dir .. '/copy.remarkup'
+    child.cmd('saveas ' .. path)
+    child.type_keys('gg', 'A', ' (copy)', '<Esc>')
+    child.cmd('write')
+
+    eq(child.lua_get('vim.bo.buftype'), '')
+    eq(vim.fn.readfile(path)[1], 'Fix bug (copy)')
+    eq(#child.calls('call-conduit maniphest.edit'), 0)
+end
+
+T[':ArcWrite with a reference pushes a plain buffer to that object'] = function()
+    child.fixture('call-conduit maniphest.edit', { object = { id = 5 } })
+    edit_remarkup({ 'New title', '', 'Description:', 'Written elsewhere.' })
+
+    child.cmd('ArcWrite T5')
+
+    local edits = child.calls('call-conduit maniphest.edit')
+    eq(#edits, 1)
+    eq(edits[1].params, {
+        objectIdentifier = 'T5',
+        transactions = {
+            { type = 'title', value = 'New title' },
+            { type = 'description', value = 'Written elsewhere.' },
+        },
+    })
+end
+
+T[':ArcWrite in a buffer that names no object says what it needs'] = function()
+    child.capture_notify()
+    edit_remarkup({ 'Just some notes' })
+
+    child.cmd('ArcWrite')
+
+    eq(
+        child.last_notification(),
+        'arcanist.nvim: :ArcWrite needs a reference: this is not an "arcanist://" buffer, and its '
+            .. 'last line does not name a Phorge object'
+    )
+end
+
+T['gf on a relative wiki link resolves it against the page it is on'] = function()
+    child.fixture(
+        'call-conduit phriction.document.search',
+        helpers.wiki_response({
+            id = 9,
+            slug = 'engineering/onboarding/',
+            title = 'Onboarding',
+            content = 'See [[./setup]] and [[../hiring]].',
+        })
+    )
+    open('w/engineering/onboarding/')
+
+    child.api.nvim_win_set_cursor(0, { 4, 8 }) -- inside "./setup"
+    child.type_keys('gf')
+    child.wait_until('vim.api.nvim_buf_get_name(0):match("arcanist://w/engineering/onboarding/setup/$") ~= nil')
+
+    child.cmd('buffer arcanist://w/engineering/onboarding/')
+    child.api.nvim_win_set_cursor(0, { 4, 24 }) -- inside "../hiring"
+    child.type_keys('gf')
+    child.wait_until('vim.api.nvim_buf_get_name(0):match("arcanist://w/engineering/hiring/$") ~= nil')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_name(0)'), 'arcanist://w/engineering/hiring/')
+end
+
+T['gf on a wiki link to a URL does not open a wiki page'] = function()
+    edit_remarkup({ 'See [[https://example.com/docs]].' })
+
+    child.api.nvim_win_set_cursor(0, { 1, 8 }) -- inside the URL
+    pcall(child.type_keys, 'gf')
+
+    eq(child.lua_get('vim.startswith(vim.api.nvim_buf_get_name(0), "arcanist://")'), false)
+    eq(#child.calls('call-conduit phriction.document.search'), 0)
+end
+
+T['a value list longer than one page is fetched whole'] = function()
+    child.fixture('call-conduit maniphest.status.search', {
+        __sequence = {
+            { data = { { name = 'Open', value = 'open' } }, cursor = { after = '1' } },
+            { data = { { name = 'Resolved', value = 'resolved' } }, cursor = {} },
+        },
+    })
+    child.fixture('call-conduit maniphest.search', helpers.task_response({ id = 5, title = 'Fix bug' }))
+    child.fixture('call-conduit maniphest.edit', { object = { id = 5 } })
+
+    open('T5')
+    child.lua([[vim.api.nvim_buf_set_lines(0, 2, 3, false, {'Status: Resolved'})]])
+    child.cmd('write')
+
+    local pages = child.calls('call-conduit maniphest.status.search')
+    eq(#pages, 2)
+    eq(pages[2].params.after, '1')
+    local edits = child.calls('call-conduit maniphest.edit')
+    eq(edits[1].params.transactions, { { type = 'status', value = 'resolved' } })
+end
+
 return T
