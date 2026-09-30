@@ -94,7 +94,7 @@ local function capitalize(str)
     return str:sub(1, 1):upper() .. str:sub(2)
 end
 
---- A `format_item` that lines the monogram and status columns up across
+--- A `format_item` that lines the reference and status columns up across
 --- the whole result set, so the plain inputlist() fallback -- which gets no
 --- columns of its own -- still reads as a table.
 ---
@@ -104,17 +104,17 @@ end
 --- @param items table[]
 --- @return fun(item: table): string
 local function formatter(items)
-    local monogram_width, status_width = 0, 0
+    local ref_width, status_width = 0, 0
     for _, item in ipairs(items) do
-        monogram_width = math.max(monogram_width, vim.api.nvim_strwidth(item.monogram))
+        ref_width = math.max(ref_width, vim.api.nvim_strwidth(item.ref))
         status_width = math.max(status_width, vim.api.nvim_strwidth(item.status))
     end
 
     return function(item)
         return vim.fn.printf(
             '%-*S  %-*S  %s',
-            monogram_width,
-            item.monogram,
+            ref_width,
+            item.ref,
             status_width,
             item.status,
             item.title
@@ -195,7 +195,7 @@ function M.list(opts)
     -- type, so looking it up once beats once per result.
     local title = fields.title_field(handler.fields)
 
-    local params = { queryKey = query_key, limit = limit }
+    local params = { queryKey = query_key, limit = limit, attachments = handler.attachments }
     if next(constraints) then
         params.constraints = constraints
     end
@@ -212,9 +212,9 @@ function M.list(opts)
             local items = {}
             for _, obj in ipairs(response.data or {}) do
                 items[#items + 1] = {
-                    monogram = string.format('%s%d', entry.prefix, obj.id),
+                    ref = handler.format(handler.key_of(obj)),
                     status = obj.fields.status and obj.fields.status.name or '',
-                    title = title.read(obj.fields) or '',
+                    title = title.read(obj.fields, obj) or '',
                     date_modified = obj.fields.dateModified or 0,
                     handler = handler,
                     obj = obj,
@@ -261,7 +261,7 @@ function M.list(opts)
                 preview_item = preview_item,
             }, function(item)
                 if item then
-                    vim.cmd.edit(types.uri(entry.prefix, item.obj.id))
+                    vim.cmd.edit(types.uri(entry.prefix, handler.key_of(item.obj)))
                 end
             end)
         end

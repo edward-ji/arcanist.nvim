@@ -5,10 +5,8 @@
 -- fetching one object with its Projects resolved to hashtags.
 --
 -- HANDLERS (below) is the registry of supported object types; adding one
--- there is what makes most features -- open/write/read/:ArcWrite, drafts --
--- pick it up automatically. arcanist.list's picker is the one exception:
--- it still assumes a search result's own key is `obj.id`, which isn't true
--- of every handler (see HANDLERS.W's own note).
+-- there is what makes every feature -- open/write/read/:ArcWrite, drafts,
+-- :ArcList -- pick it up automatically.
 
 local conduit = require('arcanist.arc.conduit')
 local fields = require('arcanist.object.fields')
@@ -21,8 +19,14 @@ local M = {}
 --- One entry per supported object-reference kind ("T", "D", "W", ...).
 --- @class arcanist.Handler
 --- @field search string Conduit method to look an object up.
---- @field params fun(key: integer|string): table `search`'s params for
---- this handler's own key (a numeric id, a slug, ...).
+--- @field constraints fun(key: integer|string): table `search`'s
+--- constraints selecting this handler's own key (a numeric id, a slug, ...).
+--- @field attachments table The attachments `search` asks for, whether it
+--- fetches one object or lists many: whatever the fields read from beyond
+--- `obj.fields`. Every handler here has a Projects field, so every one asks
+--- for `projects` -- see `resolve_projects`/`resolve_projects_sync` below
+--- for why a second lookup still has to follow before that attachment's
+--- bare PHIDs are anything a document can round-trip as text.
 --- @field format fun(key: integer|string): string This handler's key as
 --- the ref-string that follows "arcanist://" ("T123", "w/some/slug/").
 --- @field parse fun(ref_str: string): (integer|string)? The inverse of
@@ -52,16 +56,11 @@ local M = {}
 --- @field filters table<string, string> Filter word -> `constraints` key.
 --- @field fields table[] The document schema (see arcanist.object.fields).
 
---- `params` for the common case: look an object up by its numeric id.
---- Every handler here has a Projects field, so every handler's `params`
---- requests the `projects` attachment -- see `resolve_projects`/
---- `resolve_projects_sync` below for why a second lookup still has to
---- follow before that attachment's bare PHIDs are anything a document can
---- round-trip as text.
+--- `constraints` for the common case: look an object up by its numeric id.
 --- @param id integer
 --- @return table
 local function by_id(id)
-    return { constraints = { ids = { id } }, attachments = { projects = true } }
+    return { ids = { id } }
 end
 
 local STATUS = fields.value_source({
@@ -200,7 +199,8 @@ end
 local HANDLERS = {
     T = vim.tbl_extend('force', monogram_handler('T', 'maniphest.edit'), {
         search = 'maniphest.search',
-        params = by_id,
+        constraints = by_id,
+        attachments = { projects = true },
         filetype = 'remarkup',
         type = 'task',
         plural = 'tasks',
@@ -249,7 +249,8 @@ local HANDLERS = {
     }),
     D = vim.tbl_extend('force', monogram_handler('D', 'differential.revision.edit'), {
         search = 'differential.revision.search',
-        params = by_id,
+        constraints = by_id,
+        attachments = { projects = true },
         filetype = 'remarkup',
         type = 'revision',
         plural = 'revisions',
@@ -315,20 +316,15 @@ local HANDLERS = {
     -- `defineParamTypes` has no such parameter), so it takes the second
     -- Conduit call instead.
     --
-    -- arcanist.list's picker assumes a search result's own ref key is
-    -- `obj.id`; W's is `obj.fields.path` instead (see `key_of` below).
-    --
     -- Not `dated`: neither `fields` nor the `content` attachment carries a
     -- timestamp (confirmed against the Phorge source), so a wiki document
     -- has no "Last Modified:" line.
     W = {
         search = 'phriction.document.search',
-        params = function(slug)
-            return {
-                constraints = { paths = { slug } },
-                attachments = { content = true, projects = true },
-            }
+        constraints = function(slug)
+            return { paths = { slug } }
         end,
+        attachments = { content = true, projects = true },
         format = function(key)
             return 'w/' .. key
         end,
@@ -571,7 +567,7 @@ function M.uri(prefix, key)
     return 'arcanist://' .. HANDLERS[prefix].format(key)
 end
 
---- Every handler's `params` requests the `projects` attachment, but Conduit
+--- Every handler's `attachments` asks for `projects`, but Conduit
 --- only ever hands that back as bare PHIDs -- never the hashtag text a
 --- document round-trips as. This turns a `project.search` fetch (via
 --- `arcanist.arc.source`, so it's cached the same way Status/Priority are) for
@@ -624,6 +620,14 @@ local function resolve_projects_sync(obj)
     obj._project_tags = tags_from_projects(items, phids)
 end
 
+--- `handler.search`'s params for looking up its object `key`.
+--- @param handler table one of HANDLERS' values
+--- @param key integer|string
+--- @return table
+local function search_params(handler, key)
+    return { constraints = handler.constraints(key), attachments = handler.attachments }
+end
+
 --- Fetch `prefix`+`key` synchronously.
 --- @param handler table one of HANDLERS' values
 --- @param key integer|string
@@ -631,7 +635,7 @@ end
 --- @return string? err
 local function fetch_sync(handler, key)
     local config = require('arcanist').config
-    local ok, response, err = conduit.call_sync(handler.search, handler.params(key), config.conduit_timeout)
+    local ok, response, err = conduit.call_sync(handler.search, search_params(handler, key), config.conduit_timeout)
     if not ok then
         return nil, err
     end
@@ -648,7 +652,7 @@ end
 --- @param key integer|string
 --- @param callback fun(obj: table?, err: string?)
 local function fetch(handler, key, callback)
-    conduit.call(handler.search, handler.params(key), function(ok, response, err)
+    conduit.call(handler.search, search_params(handler, key), function(ok, response, err)
         if not ok then
             callback(nil, err)
             return

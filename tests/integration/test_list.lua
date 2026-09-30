@@ -38,6 +38,25 @@ T[':ArcList opens the picked result as an arcanist:// buffer'] = function()
     eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, 1, false)')[1], 'Revision B')
 end
 
+T[':ArcList wikis opens the picked page by its slug'] = function()
+    child.fixture(
+        'call-conduit phriction.document.search',
+        helpers.wiki_response({ id = 9, slug = 'engineering/onboarding/', title = 'Onboarding' })
+    )
+    child.lua([[vim.ui.select = function(items, opts, on_choice)
+        _G.__shown = opts.format_item(items[1])
+        on_choice(items[1])
+    end]])
+
+    child.cmd('enew')
+    child.cmd('ArcList wikis')
+    child.wait_until('vim.b[0].arcanist_loaded ~= nil')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_name(0)'), 'arcanist://w/engineering/onboarding/')
+    eq(child.lua_get('_G.__shown'), 'w/engineering/onboarding/    Onboarding')
+    eq(child.calls('call-conduit phriction.document.search')[1].params.attachments.content, true)
+end
+
 T[':ArcList rejects a query key the type does not support'] = function()
     child.cmd('enew')
     child.cmd('ArcList reviewing tasks')
