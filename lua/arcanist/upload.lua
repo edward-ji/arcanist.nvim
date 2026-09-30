@@ -8,19 +8,9 @@
 -- bar to a real terminal, so a piped invocation like this gets no
 -- mid-upload feedback at all).
 
-local M = {}
+local arc = require('arcanist.arc')
 
---- On failure, `arc upload` dumps a multi-line exception (timestamp, class,
---- stack trace) to stderr. Trim that down to just the exception message for
---- `callback`/`vim.notify`; falls back to the raw first line if the format
---- doesn't match (e.g. a future `arc` version rewords it).
---- @param stderr string
---- @return string
-local function extract_error(stderr)
-    local line = vim.trim(stderr or ''):match('^[^\n]*') or ''
-    local msg = line:match('EXCEPTION:%s*%b()%s*(.-)%s+at%s+%[')
-    return msg or line
-end
+local M = {}
 
 --- Upload a file to Phorge and resolve it to a Remarkup monogram (e.g.
 --- "F123", for use as "{F123}").
@@ -40,39 +30,32 @@ function M.upload(path, callback)
         callback(false, msg)
     end
 
-    -- vim.system() throws synchronously (rather than calling back) if `arc`
-    -- itself can't be spawned at all, e.g. it's missing from PATH.
-    local spawn_ok, res = pcall(
-        vim.system,
-        { 'arc', 'upload', '--json', '--', path },
-        { text = true },
-        vim.schedule_wrap(function(obj)
-            if cancelled then
-                return
-            end
+    local argv = { 'arc', 'upload', '--json', '--', path }
+    local proc, spawn_err = arc.spawn(argv, { text = true }, function(obj)
+        if cancelled then
+            return
+        end
 
-            if obj.code ~= 0 then
-                local msg = extract_error(obj.stderr)
-                if msg == '' then
-                    msg = string.format('arc exited with code %d', obj.code)
-                end
-                fail(msg)
-                return
+        if obj.code ~= 0 then
+            local msg = arc.error_message(obj.stderr)
+            if msg == '' then
+                msg = string.format('arc exited with code %d', obj.code)
             end
+            fail(msg)
+            return
+        end
 
-            local ok, decoded = pcall(vim.json.decode, obj.stdout)
-            local file = ok and type(decoded) == 'table' and decoded[1]
-            if not file or not file.id then
-                fail('failed to parse arc upload output: ' .. obj.stdout)
-                return
-            end
+        local ok, decoded = pcall(vim.json.decode, obj.stdout)
+        local file = ok and type(decoded) == 'table' and decoded[1]
+        if not file or not file.id then
+            fail('failed to parse arc upload output: ' .. obj.stdout)
+            return
+        end
 
-            callback(true, 'F' .. file.id)
-        end)
-    )
-    local proc = spawn_ok and res or nil
+        callback(true, 'F' .. file.id)
+    end)
     if not proc then
-        fail(vim.trim(tostring(res)))
+        fail(spawn_err)
     end
 
     return function()

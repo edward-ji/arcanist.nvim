@@ -7,6 +7,7 @@
 -- inside a JSON envelope): `arc` streams the bytes straight to disk and
 -- reassembles chunked files, so nothing large passes through the editor.
 
+local arc = require('arcanist.arc')
 local conduit = require('arcanist.arc.conduit')
 local notify = require('arcanist.notify')
 
@@ -44,18 +45,6 @@ local function human(bytes)
         n, i = n / 1024, i + 1
     end
     return i == 1 and string.format('%d B', n) or string.format('%.1f %s', n, units[i])
-end
-
---- A human message out of `arc download`'s stderr, which leads each line with
---- a marker (" DATA ", " USAGE EXCEPTION ", ...).
---- @param stderr string
---- @return string
-local function arc_error(stderr)
-    stderr = vim.trim(stderr or '')
-    if stderr == '' then
-        return 'arc download failed'
-    end
-    return stderr:match('USAGE EXCEPTION%s+([^\n]+)') or vim.split(stderr, '\n', { plain = true })[1]
 end
 
 --- The completed download for `id`, if one is cached -- a leftover ".part"
@@ -217,24 +206,25 @@ function M.fetch(monogram, opts, cb)
 
         progress(string.format('loading F%d (%s, %s)...', id, name, bytes and human(bytes) or '?'))
 
-        vim.system(
-            { 'arc', 'download', '--as', part, '--', 'F' .. id },
-            { text = true },
-            vim.schedule_wrap(function(obj)
-                if obj.code ~= 0 then
-                    pcall(os.remove, part)
-                    return fail(string.format('F%d: %s', id, arc_error(obj.stderr)))
-                end
-                -- Same directory, so this is atomic; a partial download never
-                -- sits where `cached()` would find it.
-                local renamed, rename_err = os.rename(part, dest)
-                if not renamed then
-                    pcall(os.remove, part)
-                    return fail(string.format('F%d: %s', id, rename_err))
-                end
-                done(dest, info)
-            end)
-        )
+        local argv = { 'arc', 'download', '--as', part, '--', 'F' .. id }
+        local _, spawn_err = arc.spawn(argv, { text = true }, function(obj)
+            if obj.code ~= 0 then
+                pcall(os.remove, part)
+                local msg = arc.error_message(obj.stderr)
+                return fail(string.format('F%d: %s', id, msg ~= '' and msg or 'arc download failed'))
+            end
+            -- Same directory, so this is atomic; a partial download never
+            -- sits where `cached()` would find it.
+            local renamed, rename_err = os.rename(part, dest)
+            if not renamed then
+                pcall(os.remove, part)
+                return fail(string.format('F%d: %s', id, rename_err))
+            end
+            done(dest, info)
+        end)
+        if spawn_err then
+            fail(string.format('F%d: %s', id, spawn_err))
+        end
     end)
 end
 

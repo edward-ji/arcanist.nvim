@@ -1,5 +1,7 @@
 -- Thin wrapper around `arc call-conduit`.
 
+local arc = require('arcanist.arc')
+
 local M = {}
 
 --- `arc` refuses ambiguous noninteractive argument lists (we have no TTY to
@@ -28,7 +30,7 @@ local function decode_result(obj)
         if obj.code == 124 and obj.signal == 9 then
             return false, nil, 'arc call-conduit timed out'
         end
-        local msg = vim.trim(obj.stderr or '')
+        local msg = arc.error_message(obj.stderr)
         if msg == '' then
             msg = string.format('arc exited with code %d', obj.code)
         end
@@ -57,21 +59,15 @@ end
 --- @param params table Method parameters, JSON-encodable.
 --- @param callback fun(ok: boolean, result: any, err: string?)
 function M.call(method, params, callback)
-    -- vim.system() throws synchronously (rather than calling back) if `arc`
-    -- itself can't be spawned at all, e.g. it's missing from PATH -- so that
-    -- case has to be caught here and routed into `callback`, or it escapes
-    -- as an error from whatever autocmd happened to trigger the call.
-    local spawn_ok, spawn_err = pcall(
-        vim.system,
-        cmd(method),
-        { stdin = vim.json.encode(params), text = true },
-        vim.schedule_wrap(function(obj)
-            callback(decode_result(obj))
-        end)
-    )
-    if not spawn_ok then
+    -- A failed spawn is routed into `callback` too, so it runs later
+    -- either way.
+    local opts = { stdin = vim.json.encode(params), text = true }
+    local proc, spawn_err = arc.spawn(cmd(method), opts, function(obj)
+        callback(decode_result(obj))
+    end)
+    if not proc then
         vim.schedule(function()
-            callback(false, nil, vim.trim(tostring(spawn_err)))
+            callback(false, nil, spawn_err)
         end)
     end
 end
@@ -89,11 +85,11 @@ end
 --- @return any result
 --- @return string? err
 function M.call_sync(method, params, timeout)
-    local ok, obj = pcall(vim.system, cmd(method), { stdin = vim.json.encode(params), text = true })
-    if not ok then
-        return false, nil, vim.trim(tostring(obj))
+    local proc, spawn_err = arc.spawn(cmd(method), { stdin = vim.json.encode(params), text = true })
+    if not proc then
+        return false, nil, spawn_err
     end
-    local result = obj:wait(timeout)
+    local result = proc:wait(timeout)
     if not result then
         return false, nil, 'arc call-conduit timed out'
     end
