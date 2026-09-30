@@ -9,6 +9,210 @@ local types = require('arcanist.object.types')
 
 local M = {}
 
+--- Whether `bufnr` is `prefix`+`key`'s own "arcanist://" buffer, and the
+--- baseline it carries of that object as loaded, if any.
+--- @param bufnr integer
+--- @param prefix string
+--- @param key integer|string
+--- @param ref_name string
+--- @return boolean is_own
+--- @return table? baseline
+local function target_of(bufnr, prefix, key, ref_name)
+    -- Two separate questions. Whether this is the object's own buffer
+    -- (`is_own`) decides what happens to the buffer, 'modified' above all.
+    -- Whether it carries a record of the object as loaded (`baseline`)
+    -- decides what gets sent and whether a conflict is checked for. A copy
+    -- saved out with ":sav" answers no to the first and yes to the second.
+    --
+    -- Compared via `parse_uri` (both sides run through `handler.parse`)
+    -- rather than raw name equality, since a buffer's literal name is never
+    -- rewritten to its canonical form (see HANDLERS.W's `parse`).
+    local buf_prefix, buf_key = types.parse_uri(vim.api.nvim_buf_get_name(bufnr))
+    local is_own = buf_prefix == prefix and buf_key == key
+    local loaded = vim.b[bufnr].arcanist_loaded
+    return is_own, loaded and loaded.ref == ref_name and loaded or nil
+end
+
+--- Cross-check `bufnr`'s identity line against the target. Whether the
+--- text names this object at all (so its "Last Modified:" line dates it),
+--- or nil and the message refusing the push.
+--- @param bufnr integer
+--- @param prefix string
+--- @param key integer|string
+--- @param ref_name string
+--- @return boolean? named
+--- @return string? err
+local function check_identity(bufnr, prefix, key, ref_name)
+    local id_prefix, id_key, id_err = document.identity_of(bufnr)
+    if id_err then
+        return nil, string.format('failed to update %s: %s', ref_name, id_err)
+    end
+    if id_prefix and not (id_prefix == prefix and id_key == key) then
+        -- A copy about to go over the object it was copied from. `!` doesn't
+        -- override this -- it means "ignore the staleness check" -- but
+        -- deleting the line does.
+        return nil,
+            string.format(
+                '%s: this text is labelled %s. Delete the "%s:" line to push it elsewhere',
+                ref_name,
+                types.get(id_prefix).format(id_key),
+                types.get(id_prefix).identity
+            )
+    end
+    return id_prefix ~= nil
+end
+
+--- One transaction per field whose parsed text in `values` differs from
+--- `baseline` -- every field present, without one -- or nil and an error.
+--- @param handler table one of HANDLERS' values
+--- @param values table<string, string> from `fields.parse`
+--- @param baseline table?
+--- @return table[]? transactions
+--- @return string? err
+local function transactions_for(handler, values, baseline)
+    local transactions = {}
+    for _, field in ipairs(handler.fields) do
+        local raw = values[field.key]
+        -- No `write` is the identity line: nothing to send for it.
+        if
+            field.write
+            and raw ~= nil
+            and fields.changed(field, baseline and baseline.values[field.key], raw)
+        then
+            local value, err = fields.write_value(field, raw)
+            if not value then
+                return nil, err
+            end
+            table.insert(transactions, { type = field.key, value = value })
+        end
+    end
+    return transactions
+end
+
+--- The staleness guard: refuse the push if the server's copy moved on since
+--- the buffer's text was taken from it -- compared field by field against
+--- `baseline`, or by `dateModified` against `last_modified` without one.
+--- The freshly fetched object, or nil and the message refusing the push.
+--- @param handler table one of HANDLERS' values
+--- @param prefix string
+--- @param key integer|string
+--- @param ref_name string
+--- @param baseline table?
+--- @param last_modified string?
+--- @return table? obj
+--- @return string? err
+local function check_drift(handler, prefix, key, ref_name, baseline, last_modified)
+    local obj, err = types.fetch_sync(handler, key)
+    if err then
+        return nil, string.format('failed to check %s for changes: %s', ref_name, err)
+    end
+    if not obj then
+        return nil, string.format('%s no longer exists', ref_name)
+    end
+    -- Compared field by field rather than by dateModified, which has
+    -- one-second resolution and moves for a write that changed nothing.
+    -- Fields with no `write` are left out: a write cannot reach them, so
+    -- a change to one is not a change this write could lose.
+    if baseline then
+        local current = fields.raw_values(handler.fields, obj)
+        for _, field in ipairs(handler.fields) do
+            if field.write and fields.changed(field, baseline.values[field.key], current[field.key]) then
+                -- `:e` alone won't work here -- the buffer is modified, so Vim
+                -- refuses with E37 -- and `:e!` discards the edits, hence the
+                -- nudge to save them off somewhere first. `!` overwrites the
+                -- server's version instead, same as any other Vim write.
+                return nil,
+                    string.format(
+                        '%s changed on the server since it was loaded. Your edits are still here; '
+                            .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
+                            .. 'to overwrite the server\'s version',
+                        ref_name
+                    )
+            end
+        end
+    elseif obj.fields.dateModified and types.iso8601(obj.fields.dateModified) > last_modified then
+        -- No fields to compare, so dateModified is all there is.
+        return nil,
+            string.format(
+                '%s changed on the server since %s. Your edits are still here; '
+                    .. ':w {file} to keep a copy, then :e! %s to refetch -- or :ArcWrite! '
+                    .. 'to overwrite the server\'s version',
+                ref_name,
+                last_modified,
+                types.uri(prefix, key)
+            )
+    end
+    return obj
+end
+
+--- Send `transactions` as however many Conduit calls `handler` needs.
+--- @param handler table one of HANDLERS' values
+--- @param key integer|string
+--- @param transactions table[]
+--- @param known_obj table? see `build_edit_calls`
+--- @return boolean ok
+--- @return string? err
+local function apply(handler, key, transactions, known_obj)
+    local calls, calls_err = handler.build_edit_calls(key, transactions, known_obj)
+    if not calls then
+        return false, calls_err
+    end
+    local timeout = require('arcanist').config.conduit_timeout
+    for _, call in ipairs(calls) do
+        local ok, _, err = conduit.call_sync(call.method, call.params, timeout)
+        if not ok then
+            return false, err
+        end
+    end
+    return true
+end
+
+--- After a push lands, re-fetch for a baseline and a "Last Modified:"
+--- matching what the server now holds. Content bar that one line is
+--- deliberately left alone so the cursor and undo history survive the save.
+--- @param bufnr integer
+--- @param handler table one of HANDLERS' values
+--- @param key integer|string
+--- @param ref_name string
+--- @param is_own boolean
+--- @param baseline table?
+--- @param last_modified string?
+local function refresh(bufnr, handler, key, ref_name, is_own, baseline, last_modified)
+    local obj, refresh_err = types.fetch_sync(handler, key)
+    if obj and last_modified and obj.fields.dateModified then
+        document.set_last_modified(bufnr, ref_name, types.iso8601(obj.fields.dateModified))
+    end
+    if is_own then
+        vim.bo[bufnr].modified = false
+    end
+    if obj then
+        if baseline then
+            vim.b[bufnr].arcanist_loaded = {
+                ref = ref_name,
+                values = fields.raw_values(handler.fields, obj),
+            }
+        end
+        notify.info('updated ' .. ref_name)
+    elseif baseline then
+        notify.warn(
+            string.format(
+                'updated %s, but could not refresh it (%s); :e to reload',
+                ref_name,
+                refresh_err or 'not found'
+            )
+        )
+    else
+        notify.warn(
+            string.format(
+                'updated %s, but could not read back its new %s (%s); the next :ArcWrite may need !',
+                ref_name,
+                types.LAST_MODIFIED,
+                refresh_err or 'not found'
+            )
+        )
+    end
+end
+
 --- Push `lines` (from `bufnr`) to `prefix`+`key` over Conduit. When `bufnr`
 --- is itself the "arcanist://<ref>" buffer being updated, runs the
 --- staleness guard first (unless `force`) and refreshes its
@@ -52,80 +256,45 @@ local M = {}
 --- @return boolean pushed whether the object now matches the buffer.
 function M.push(bufnr, handler, prefix, key, lines, force)
     local ref_name = handler.format(key)
-    local config = require('arcanist').config
-    -- Two separate questions. Whether this is the object's own buffer
-    -- (`is_own`) decides what happens to the buffer, 'modified' above all.
-    -- Whether it carries a record of the object as loaded (`baseline`)
-    -- decides what gets sent and whether a conflict is checked for. A copy
-    -- saved out with ":sav" answers no to the first and yes to the second.
-    --
-    -- Compared via `parse_uri` (both sides run through `handler.parse`)
-    -- rather than raw name equality, since a buffer's literal name is never
-    -- rewritten to its canonical form (see HANDLERS.W's `parse`).
-    local buf_prefix, buf_key = types.parse_uri(vim.api.nvim_buf_get_name(bufnr))
-    local is_own = buf_prefix == prefix and buf_key == key
-    local loaded = vim.b[bufnr].arcanist_loaded
-    local baseline = loaded and loaded.ref == ref_name and loaded or nil
 
+    --- @param err string
+    --- @return false
+    local function fail(err)
+        notify.err(string.format('failed to update %s: %s', ref_name, err))
+        return false
+    end
+
+    local is_own, baseline = target_of(bufnr, prefix, key, ref_name)
     if is_own and not baseline then
         notify.err(string.format('%s has not loaded successfully; nothing to update', ref_name))
         return false
     end
 
-    local id_prefix, id_key, id_err = document.identity_of(bufnr)
+    local named, id_err = check_identity(bufnr, prefix, key, ref_name)
     if id_err then
-        notify.err(string.format('failed to update %s: %s', ref_name, id_err))
-        return false
-    end
-    if id_prefix and not (id_prefix == prefix and id_key == key) then
-        -- A copy about to go over the object it was copied from. `!` doesn't
-        -- override this -- it means "ignore the staleness check" -- but
-        -- deleting the line does.
-        notify.err(
-            string.format(
-                '%s: this text is labelled %s. Delete the "%s:" line to push it elsewhere',
-                ref_name,
-                types.get(id_prefix).format(id_key),
-                types.get(id_prefix).identity
-            )
-        )
+        notify.err(id_err)
         return false
     end
 
     local values, parse_err = fields.parse(handler.fields, lines)
     if not values then
-        notify.err(string.format('failed to update %s: %s', ref_name, parse_err))
-        return false
+        return fail(parse_err)
     end
 
     -- Only under the identity line it dates: with that line deleted to push
     -- the text elsewhere, it dates some other object.
     local last_modified
-    if id_prefix then
+    if named then
         local lm_err
         last_modified, lm_err = document.last_modified_of(bufnr, ref_name, values.last_modified)
         if lm_err then
-            notify.err(string.format('failed to update %s: %s', ref_name, lm_err))
-            return false
+            return fail(lm_err)
         end
     end
 
-    local transactions = {}
-    for _, field in ipairs(handler.fields) do
-        local raw = values[field.key]
-        -- No `write` is the identity line: nothing to send for it.
-        if
-            field.write
-            and raw ~= nil
-            and fields.changed(field, baseline and baseline.values[field.key], raw)
-        then
-            local value, err = fields.write_value(field, raw)
-            if not value then
-                notify.err(string.format('failed to update %s: %s', ref_name, err))
-                return false
-            end
-            table.insert(transactions, { type = field.key, value = value })
-        end
+    local transactions, tx_err = transactions_for(handler, values, baseline)
+    if not transactions then
+        return fail(tx_err)
     end
 
     if #transactions == 0 then
@@ -151,117 +320,23 @@ function M.push(bufnr, handler, prefix, key, lines, force)
     -- something off it (see HANDLERS.W).
     local fresh_obj
     if (baseline or last_modified) and not force then
-        local obj, err = types.fetch_sync(handler, key)
-        if err then
-            notify.err(string.format('failed to check %s for changes: %s', ref_name, err))
-            return false
-        end
-        if not obj then
-            notify.err(string.format('%s no longer exists', ref_name))
-            return false
-        end
-        fresh_obj = obj
-        -- Compared field by field rather than by dateModified, which has
-        -- one-second resolution and moves for a write that changed nothing.
-        -- Fields with no `write` are left out: a write cannot reach them, so
-        -- a change to one is not a change this write could lose.
-        local drifted = false
-        if baseline then
-            local current = fields.raw_values(handler.fields, obj)
-            for _, field in ipairs(handler.fields) do
-                if
-                    field.write
-                    and fields.changed(field, baseline.values[field.key], current[field.key])
-                then
-                    drifted = true
-                    break
-                end
-            end
-        elseif obj.fields.dateModified and types.iso8601(obj.fields.dateModified) > last_modified then
-            -- No fields to compare, so dateModified is all there is.
-            notify.err(
-                string.format(
-                    '%s changed on the server since %s. Your edits are still here; '
-                        .. ':w {file} to keep a copy, then :e! %s to refetch -- or :ArcWrite! '
-                        .. 'to overwrite the server\'s version',
-                    ref_name,
-                    last_modified,
-                    types.uri(prefix, key)
-                )
-            )
-            return false
-        end
-        if drifted then
-            -- `:e` alone won't work here -- the buffer is modified, so Vim
-            -- refuses with E37 -- and `:e!` discards the edits, hence the
-            -- nudge to save them off somewhere first. `!` overwrites the
-            -- server's version instead, same as any other Vim write.
-            notify.err(
-                string.format(
-                    '%s changed on the server since it was loaded. Your edits are still here; '
-                        .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
-                        .. 'to overwrite the server\'s version',
-                    ref_name
-                )
-            )
+        local drift_err
+        fresh_obj, drift_err = check_drift(handler, prefix, key, ref_name, baseline, last_modified)
+        if not fresh_obj then
+            notify.err(drift_err)
             return false
         end
     end
 
-    local calls, calls_err = handler.build_edit_calls(key, transactions, fresh_obj)
-    if not calls then
-        notify.err(string.format('failed to update %s: %s', ref_name, calls_err))
-        return false
+    local applied, apply_err = apply(handler, key, transactions, fresh_obj)
+    if not applied then
+        return fail(apply_err)
     end
 
-    for _, call in ipairs(calls) do
-        local ok, _, err = conduit.call_sync(call.method, call.params, config.conduit_timeout)
-        if not ok then
-            notify.err(string.format('failed to update %s: %s', ref_name, err))
-            return false
-        end
-    end
-
-    if not baseline and not last_modified then
-        notify.info('updated ' .. ref_name)
-        return true
-    end
-
-    -- Re-fetch for a baseline and a "Last Modified:" matching what the
-    -- server now holds. Content bar that one line is deliberately left alone
-    -- so the cursor and undo history survive the save.
-    local obj, refresh_err = types.fetch_sync(handler, key)
-    if obj and last_modified and obj.fields.dateModified then
-        document.set_last_modified(bufnr, ref_name, types.iso8601(obj.fields.dateModified))
-    end
-    if is_own then
-        vim.bo[bufnr].modified = false
-    end
-    if obj then
-        if baseline then
-            vim.b[bufnr].arcanist_loaded = {
-                ref = ref_name,
-                values = fields.raw_values(handler.fields, obj),
-            }
-        end
-        notify.info('updated ' .. ref_name)
-    elseif baseline then
-        notify.warn(
-            string.format(
-                'updated %s, but could not refresh it (%s); :e to reload',
-                ref_name,
-                refresh_err or 'not found'
-            )
-        )
+    if baseline or last_modified then
+        refresh(bufnr, handler, key, ref_name, is_own, baseline, last_modified)
     else
-        notify.warn(
-            string.format(
-                'updated %s, but could not read back its new %s (%s); the next :ArcWrite may need !',
-                ref_name,
-                types.LAST_MODIFIED,
-                refresh_err or 'not found'
-            )
-        )
+        notify.info('updated ' .. ref_name)
     end
     return true
 end
