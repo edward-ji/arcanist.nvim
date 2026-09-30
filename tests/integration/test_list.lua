@@ -52,4 +52,16 @@ T[':ArcList rejects a query key the type does not support'] = function()
     eq(#child.calls(), 0) -- rejected before ever spawning the fake arc
 end
 
+T[':ArcList completes the types a typed query applies to, then filters'] = function()
+    eq(child.lua_get([[vim.fn.getcompletion('ArcList open ', 'cmdline')]]), { 'tasks', 'author=', 'owner=' })
+    eq(child.lua_get([[vim.fn.getcompletion('ArcList open tasks owner=', 'cmdline')]]), { 'owner=me' })
+end
+
+T[':ArcList with a filter given twice says so'] = function()
+    child.cmd('ArcList author=me author=alice')
+
+    eq(child.last_notification(), 'arcanist.nvim: "author" is set twice')
+    eq(#child.calls(), 0)
+end
+
 return T
