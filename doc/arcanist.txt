@@ -464,8 +464,9 @@ While the upload is in flight a placeholder marks the spot, and is replaced
 when it finishes. On failure the placeholder is removed and the error
 reported.
 
-This is aimed at terminals that paste dropped files as paths. Several
-space-separated paths in one paste are each uploaded. Only absolute paths
+This is aimed at terminals that paste dropped files as paths. Several paths
+in one paste, separated by spaces or newlines, are each uploaded; a path on a
+line of its own needn't be quoted even if it contains spaces. Only absolute paths
 ("/" or "~") are treated this way, so ordinary prose that happens to match a
 filename is pasted as text.
 

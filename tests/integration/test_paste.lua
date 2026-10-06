@@ -39,6 +39,89 @@ T['pasting a file path uploads it and swaps the placeholder for {F<id>}'] = func
     eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, 1, false)'), { '{F555}' })
 end
 
+T['dropping several files pasted space-separated uploads each one'] = function()
+    local a, b = child.dir .. '/a.png', child.dir .. '/b.png'
+    for _, path in ipairs({ a, b }) do
+        local f = assert(io.open(path, 'w'))
+        f:write('x')
+        f:close()
+    end
+    child.fixture('upload', { { id = 7 } })
+
+    open_remarkup_buffer()
+    child.lua(string.format('vim.paste({%q}, -1)', a .. ' ' .. b))
+    child.wait_until('vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == "{F7} {F7}"')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)'), { '{F7} {F7}' })
+end
+
+T['dropping several files pasted newline-separated uploads each one'] = function()
+    local a, b = child.dir .. '/a.png', child.dir .. '/b.png'
+    for _, path in ipairs({ a, b }) do
+        local f = assert(io.open(path, 'w'))
+        f:write('x')
+        f:close()
+    end
+    child.fixture('upload', { { id = 7 } })
+
+    open_remarkup_buffer()
+    child.lua(string.format('vim.paste({%q, %q, ""}, -1)', a, b))
+    child.wait_until('vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == "{F7} {F7} "')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)'), { '{F7} {F7} ' })
+end
+
+T['dropping files whose unquoted paths contain spaces uploads each one'] = function()
+    local a, b = child.dir .. '/my photo.png', child.dir .. '/my notes.txt'
+    for _, path in ipairs({ a, b }) do
+        local f = assert(io.open(path, 'w'))
+        f:write('x')
+        f:close()
+    end
+    child.fixture('upload', { { id = 7 } })
+
+    open_remarkup_buffer()
+    child.lua(string.format('vim.paste({%q, %q}, -1)', a, b))
+    child.wait_until('vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == "{F7} {F7}"')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)'), { '{F7} {F7}' })
+    local uploaded = vim.tbl_map(function(call)
+        return call.params.path
+    end, child.calls('upload'))
+    table.sort(uploaded)
+    eq(uploaded, { b, a })
+end
+
+T['dropping files one paste at a time keeps their references apart'] = function()
+    local a, b = child.dir .. '/a.png', child.dir .. '/b.png'
+    for _, path in ipairs({ a, b }) do
+        local f = assert(io.open(path, 'w'))
+        f:write('x')
+        f:close()
+    end
+    child.fixture('upload', { { id = 7 } })
+
+    open_remarkup_buffer()
+    child.lua(string.format('vim.paste({%q}, -1)', a .. ' '))
+    child.lua(string.format('vim.paste({%q}, -1)', b .. ' '))
+    child.wait_until('vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == "{F7} {F7} "')
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)'), { '{F7} {F7} ' })
+end
+
+T['pasting lines that are not all file paths pastes them as text'] = function()
+    local path = child.dir .. '/a.png'
+    local f = assert(io.open(path, 'w'))
+    f:write('x')
+    f:close()
+
+    open_remarkup_buffer()
+    child.lua(string.format('vim.paste({%q, "some prose"}, -1)', path))
+
+    eq(child.lua_get('vim.api.nvim_buf_get_lines(0, 0, -1, false)'), { path, 'some prose' })
+    eq(#child.calls(), 0)
+end
+
 T['a failed upload removes the placeholder'] = function()
     local path = child.dir .. '/broken.png'
     local f = assert(io.open(path, 'w'))

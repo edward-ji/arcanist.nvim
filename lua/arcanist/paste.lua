@@ -137,33 +137,39 @@ local function is_existing_absolute_file(path)
 end
 
 --- Return the existing absolute file path(s) `lines` is made up of, or nil
---- if it isn't only that.
+--- if it isn't only that, and whether the paste ended in whitespace.
+--- Terminals join a multi-file drop with spaces (WezTerm) or newlines
+--- (Ghostty), so both separate paths -- but some (kitty, Alacritty) don't
+--- escape them at all, so a whole line naming a file is taken as is first.
 --- @param lines string[]
---- @return string[]?
+--- @return string[]? paths
+--- @return boolean trailing_space
 local function paths_in(lines)
-    local line
-    if #lines == 1 then
-        line = lines[1]
-    elseif #lines == 2 and lines[2] == '' then
-        -- A path copied off a terminal line often carries its trailing
-        -- newline along.
-        line = lines[1]
-    else
-        return nil
+    -- Ignore trailing newlines.
+    local last = #lines
+    while last > 1 and lines[last] == '' do
+        last = last - 1
     end
 
-    -- Cheap bail-out before the full word-split scan below.
-    if not line:match('^%s*[~/]') then
-        return nil
-    end
-
-    local words = split_words(line)
-    for _, word in ipairs(words) do
-        if not is_existing_absolute_file(word) then
-            return nil
+    local paths = {}
+    for i = 1, last do
+        local line = lines[i]:gsub('%s+$', '')
+        if is_existing_absolute_file(line) then
+            paths[#paths + 1] = line
+        else
+            -- Cheap bail-out before the full word-split scan below.
+            if not line:match('^%s*[~/]') then
+                return nil, false
+            end
+            for _, word in ipairs(split_words(line)) do
+                if not is_existing_absolute_file(word) then
+                    return nil, false
+                end
+                paths[#paths + 1] = word
+            end
         end
     end
-    return words
+    return paths, last < #lines or lines[last]:match('%s$') ~= nil
 end
 
 --- Insert `text` at the cursor, the way a normal paste would: spliced
@@ -300,7 +306,7 @@ function M.setup()
             return overridden(full_lines, -1)
         end
 
-        local paths = paths_in(full_lines)
+        local paths, trailing_space = paths_in(full_lines)
         if not paths then
             return overridden(full_lines, -1)
         end
@@ -311,6 +317,11 @@ function M.setup()
                 insert_at_cursor(bufnr, ' ', mode)
             end
             start_upload(bufnr, path, mode)
+        end
+        -- Kept so that consecutive drops -- Alacritty pastes each dropped
+        -- file on its own -- don't run their references together.
+        if trailing_space then
+            insert_at_cursor(bufnr, ' ', mode)
         end
 
         return true
