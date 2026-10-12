@@ -577,6 +577,10 @@ T[':saveas turns an arcanist:// buffer into an ordinary file'] = function()
 end
 
 T[':ArcWrite with a reference pushes a plain buffer to that object'] = function()
+    child.fixture(
+        'call-conduit maniphest.search',
+        helpers.task_response({ id = 5, title = 'Old title', description = 'Old description.' })
+    )
     child.fixture('call-conduit maniphest.edit', { object = { id = 5 } })
     edit_remarkup({ 'New title', '', 'Description:', 'Written elsewhere.' })
 
@@ -590,6 +594,21 @@ T[':ArcWrite with a reference pushes a plain buffer to that object'] = function(
             { type = 'title', value = 'New title' },
             { type = 'description', value = 'Written elsewhere.' },
         },
+    })
+end
+
+T[':ArcWrite with a reference sends only what differs from the object'] = function()
+    child.fixture(
+        'call-conduit maniphest.search',
+        helpers.task_response({ id = 5, title = 'Same title', description = 'Old description.' })
+    )
+    child.fixture('call-conduit maniphest.edit', { object = { id = 5 } })
+    edit_remarkup({ 'Same title', '', 'Description:', 'Written elsewhere.' })
+
+    child.cmd('ArcWrite T5')
+
+    eq(child.calls('call-conduit maniphest.edit')[1].params.transactions, {
+        { type = 'description', value = 'Written elsewhere.' },
     })
 end
 

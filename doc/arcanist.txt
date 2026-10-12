@@ -237,11 +237,12 @@ redirects to the draft once one exists. Every file under `drafts.dir` opens
 as Remarkup. Drafts are one file per object and are never deleted for you --
 the directory is yours to prune.
 
-`:ArcWrite` on a draft sends every field in the document, since a draft
-carries no record of the fields as fetched. What it does carry is the
-object's "Last Modified:" line (see |arcanist-last-modified|): if the object
-was edited on the web after that time, `:ArcWrite` stops and says so, and
-`:ArcWrite!` pushes anyway. A push that lands moves the line up to the
+`:ArcWrite` on a draft fetches the object and sends only the fields that
+differ from the server's copy -- the copy the draft was taken from, as long
+as nobody has edited it since. The draft's "Last Modified:" line (see
+|arcanist-last-modified|) checks that: if the object was edited on the web
+after that time, `:ArcWrite` stops and says so, and `:ArcWrite!` pushes
+anyway. A push that lands moves the line up to the
 object's new time, leaving the draft modified for your next `:w`. Wiki
 documents have no such line -- Phorge does not report when one changed -- so
 a wiki draft is pushed unchecked.
@@ -573,10 +574,12 @@ Turn the whole thing off with `paste.upload` -- see |arcanist-config|.
                         another buffer. It also lets you compose in an
                         ordinary file and send it.
 
-                        Note that a foreign buffer has nothing to compare
-                        against, so every field it contains is sent, and the
-                        conflict guard does not run. A field whose label you
-                        leave out is still left alone.
+                        Note that a foreign buffer has no record of the
+                        object as loaded, so it is compared against the
+                        server's current copy instead: only fields that
+                        differ from it are sent, and the conflict guard does
+                        not run. A field whose label you leave out is still
+                        left alone.
 
                         A [ref] that contradicts the buffer's identity line is
                         refused, so a copy cannot be pushed over the object it

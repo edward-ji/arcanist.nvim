@@ -63,13 +63,13 @@ local function check_identity(bufnr, prefix, key, ref_name)
 end
 
 --- One transaction per field whose parsed text in `values` differs from
---- `baseline` -- every field present, without one -- or nil and an error.
+--- `base`, or nil and an error.
 --- @param handler table one of HANDLERS' values
 --- @param values table<string, string> from `fields.parse`
---- @param baseline table?
+--- @param base table<string, string> from `fields.raw_values`
 --- @return table[]? transactions
 --- @return string? err
-local function transactions_for(handler, values, baseline)
+local function transactions_for(handler, values, base)
     local transactions = {}
     for _, field in ipairs(handler.fields) do
         local raw = values[field.key]
@@ -77,7 +77,7 @@ local function transactions_for(handler, values, baseline)
         if
             field.write
             and raw ~= nil
-            and fields.changed(field, baseline and baseline.values[field.key], raw)
+            and fields.changed(field, base[field.key], raw)
         then
             local value, err = fields.write_value(field, raw)
             if not value then
@@ -89,19 +89,14 @@ local function transactions_for(handler, values, baseline)
     return transactions
 end
 
---- The staleness guard: refuse the push if the server's copy moved on since
---- the buffer's text was taken from it -- compared field by field against
---- `baseline`, or by `dateModified` against `last_modified` without one.
---- The freshly fetched object, or nil and the message refusing the push.
+--- The server's current copy of `key`, or nil and the message refusing the
+--- push.
 --- @param handler table one of HANDLERS' values
---- @param prefix string
 --- @param key integer|string
 --- @param ref_name string
---- @param baseline table?
---- @param last_modified string?
 --- @return table? obj
 --- @return string? err
-local function check_drift(handler, prefix, key, ref_name, baseline, last_modified)
+local function fetch_current(handler, key, ref_name)
     local obj, err = types.fetch_sync(handler, key)
     if err then
         return nil, string.format('failed to check %s for changes: %s', ref_name, err)
@@ -109,6 +104,22 @@ local function check_drift(handler, prefix, key, ref_name, baseline, last_modifi
     if not obj then
         return nil, string.format('%s no longer exists', ref_name)
     end
+    return obj
+end
+
+--- The staleness guard: refuse the push if the server's copy `obj` moved on
+--- since the buffer's text was taken from it -- compared field by field
+--- against `baseline`, or by `dateModified` against `last_modified` without
+--- one. The message refusing the push, or nil.
+--- @param obj table
+--- @param handler table one of HANDLERS' values
+--- @param prefix string
+--- @param key integer|string
+--- @param ref_name string
+--- @param baseline table?
+--- @param last_modified string?
+--- @return string? err
+local function check_drift(obj, handler, prefix, key, ref_name, baseline, last_modified)
     -- Compared field by field rather than by dateModified, which has
     -- one-second resolution and moves for a write that changed nothing.
     -- Fields with no `write` are left out: a write cannot reach them, so
@@ -121,28 +132,25 @@ local function check_drift(handler, prefix, key, ref_name, baseline, last_modifi
                 -- refuses with E37 -- and `:e!` discards the edits, hence the
                 -- nudge to save them off somewhere first. `!` overwrites the
                 -- server's version instead, same as any other Vim write.
-                return nil,
-                    string.format(
-                        '%s changed on the server since it was loaded. Your edits are still here; '
-                            .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
-                            .. 'to overwrite the server\'s version',
-                        ref_name
-                    )
+                return string.format(
+                    '%s changed on the server since it was loaded. Your edits are still here; '
+                        .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
+                        .. 'to overwrite the server\'s version',
+                    ref_name
+                )
             end
         end
     elseif obj.fields.dateModified and types.iso8601(obj.fields.dateModified) > last_modified then
         -- No fields to compare, so dateModified is all there is.
-        return nil,
-            string.format(
-                '%s changed on the server since %s. Your edits are still here; '
-                    .. ':w {file} to keep a copy, then :e! %s to refetch -- or :ArcWrite! '
-                    .. 'to overwrite the server\'s version',
-                ref_name,
-                last_modified,
-                types.uri(prefix, key)
-            )
+        return string.format(
+            '%s changed on the server since %s. Your edits are still here; '
+                .. ':w {file} to keep a copy, then :e! %s to refetch -- or :ArcWrite! '
+                .. 'to overwrite the server\'s version',
+            ref_name,
+            last_modified,
+            types.uri(prefix, key)
+        )
     end
-    return obj
 end
 
 --- Send `transactions` as however many Conduit calls `handler` needs.
@@ -224,11 +232,11 @@ end
 --- Only fields that actually changed become transactions -- diffed against
 --- `arcanist_loaded`, the baseline recorded at load (or after the last
 --- successful push), which names the object it was taken from. A buffer
---- carrying a baseline for some other object, or none at all (`:w
---- arcanist://T1` from an unrelated buffer), sends every field present in
---- it -- there's nothing to diff against. Either way, a field whose label
---- was deleted from the buffer is simply absent from the parse, and left
---- untouched on the server.
+--- carrying a baseline for some other object, or none at all (a draft, or
+--- `:w arcanist://T1` from an unrelated buffer), is diffed against the
+--- server's current copy instead, fetched for the purpose. Either way, a
+--- field whose label was deleted from the buffer is simply absent from the
+--- parse, and left untouched on the server.
 ---
 --- Without a baseline, a "Last Modified:" line under a matching identity
 --- line (a draft's) is the staleness guard instead: the server's
@@ -292,7 +300,23 @@ function M.push(bufnr, handler, prefix, key, lines, force)
         end
     end
 
-    local transactions, tx_err = transactions_for(handler, values, baseline)
+    -- Without a baseline, the server's current copy stands in for one. A
+    -- dated draft that passes the staleness guard below was taken from this
+    -- very copy; otherwise a field matching it is a no-op to send anyway.
+    local fresh_obj, base
+    if baseline then
+        base = baseline.values
+    else
+        local fetch_err
+        fresh_obj, fetch_err = fetch_current(handler, key, ref_name)
+        if not fresh_obj then
+            notify.err(fetch_err)
+            return false
+        end
+        base = fields.raw_values(handler.fields, fresh_obj)
+    end
+
+    local transactions, tx_err = transactions_for(handler, values, base)
     if not transactions then
         return fail(tx_err)
     end
@@ -318,12 +342,14 @@ function M.push(bufnr, handler, prefix, key, lines, force)
     -- handed to `build_edit_calls` below, which for some handlers (Wiki)
     -- would otherwise have to re-fetch the very same object just to read
     -- something off it (see HANDLERS.W).
-    local fresh_obj
     if (baseline or last_modified) and not force then
-        local drift_err
-        fresh_obj, drift_err = check_drift(handler, prefix, key, ref_name, baseline, last_modified)
+        local err
         if not fresh_obj then
-            notify.err(drift_err)
+            fresh_obj, err = fetch_current(handler, key, ref_name)
+        end
+        err = err or check_drift(fresh_obj, handler, prefix, key, ref_name, baseline, last_modified)
+        if err then
+            notify.err(err)
             return false
         end
     end

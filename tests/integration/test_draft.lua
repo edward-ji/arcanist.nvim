@@ -6,8 +6,7 @@
 --
 -- Uses revisions (D-type), not tasks: every one of their writable fields
 -- is plain `fields.TEXT` (no Status/Priority `value_source` lookups to
--- fixture), which keeps a from-draft push's "no baseline, so every field
--- is sent" behavior (see push()'s doc comment) simple to assert on.
+-- fixture), which keeps what a from-draft push sends simple to assert on.
 
 local helpers = dofile('tests/integration/helpers.lua')
 
@@ -91,15 +90,24 @@ T[':ArcWrite from a draft buffer pushes to the server'] = function()
     eq(#edits, 1)
     eq(edits[1].params, {
         objectIdentifier = 'D2',
-        transactions = {
-            { type = 'title', value = 'My revision (edited)' },
-            { type = 'summary', value = 'Summary.' },
-            { type = 'testPlan', value = 'Plan.' },
-            { type = 'projects.set', value = {} },
-        },
+        transactions = { { type = 'title', value = 'My revision (edited)' } },
     })
     -- Load, the "Last Modified:" check, and the read-back of the new one.
     eq(#child.calls('call-conduit differential.revision.search'), 3)
+end
+
+T[':ArcWrite on an unedited draft sends nothing'] = function()
+    child.capture_notify()
+    child.fixture(
+        'call-conduit differential.revision.search',
+        helpers.revision_response({ id = 2, title = 'My revision', summary = 'Summary.', testPlan = 'Plan.' })
+    )
+
+    open_draft('D2')
+    child.cmd('ArcWrite')
+
+    eq(#child.calls('call-conduit differential.revision.edit'), 0)
+    eq(child.last_notification(), 'arcanist.nvim: D2: no changes to update')
 end
 
 T[':ArcWrite refuses a draft whose object was edited on the web since it was fetched'] = function()
@@ -128,18 +136,34 @@ end
 T[':ArcWrite! pushes a draft even though its object was edited on the web'] = function()
     child.fixture('call-conduit differential.revision.search', {
         __sequence = {
-            helpers.revision_response({ id = 2, title = 'My revision' }),
-            helpers.revision_response({ id = 2, title = 'My revision (edited)', modified = helpers.MODIFIED + 60 }),
+            helpers.revision_response({ id = 2, title = 'My revision', summary = 'Summary.' }),
+            helpers.revision_response({
+                id = 2,
+                title = 'Edited on the web',
+                summary = 'Summary.',
+                modified = helpers.MODIFIED + 60,
+            }),
+            helpers.revision_response({
+                id = 2,
+                title = 'My revision',
+                summary = 'Summary (edited).',
+                modified = helpers.MODIFIED + 120,
+            }),
         },
     })
     child.fixture('call-conduit differential.revision.edit', { object = { id = 2 } })
 
     open_draft('D2')
-    child.type_keys('gg', 'A', ' (edited)', '<Esc>')
+    child.cmd('/^Summary\\./')
+    child.type_keys('A', '<BS> (edited).', '<Esc>')
     child.cmd('ArcWrite!')
 
-    eq(#child.calls('call-conduit differential.revision.edit'), 1)
-    eq(last_line(), 'Last Modified: 2026-09-21T14:14:20Z')
+    -- The web's title is overwritten; the untouched test plan isn't sent.
+    eq(child.calls('call-conduit differential.revision.edit')[1].params.transactions, {
+        { type = 'title', value = 'My revision' },
+        { type = 'summary', value = 'Summary (edited).' },
+    })
+    eq(last_line(), 'Last Modified: 2026-09-21T14:15:20Z')
 end
 
 T["a push moves the draft's Last Modified up, for the next :w to save"] = function()
@@ -185,11 +209,13 @@ T['undoing past a push does not make the next :ArcWrite look stale'] = function(
     eq(#child.calls('call-conduit differential.revision.edit'), 2)
 end
 
-T['a draft without a Last Modified line pushes without checking the server'] = function()
-    child.fixture(
-        'call-conduit differential.revision.search',
-        helpers.revision_response({ id = 2, title = 'My revision' })
-    )
+T['a draft without a Last Modified line pushes even if its object was edited on the web'] = function()
+    child.fixture('call-conduit differential.revision.search', {
+        __sequence = {
+            helpers.revision_response({ id = 2, title = 'My revision' }),
+            helpers.revision_response({ id = 2, title = 'Edited on the web', modified = helpers.MODIFIED + 60 }),
+        },
+    })
     child.fixture('call-conduit differential.revision.edit', { object = { id = 2 } })
 
     open_draft('D2')
@@ -197,8 +223,9 @@ T['a draft without a Last Modified line pushes without checking the server'] = f
     child.type_keys('gg', 'A', ' (edited)', '<Esc>')
     child.cmd('ArcWrite')
 
-    eq(#child.calls('call-conduit differential.revision.edit'), 1)
-    eq(#child.calls('call-conduit differential.revision.search'), 1) -- just the load
+    eq(child.calls('call-conduit differential.revision.edit')[1].params.transactions, {
+        { type = 'title', value = 'My revision (edited)' },
+    })
 end
 
 T['a wiki document with drafts on redirects to a nested draft path'] = function()
