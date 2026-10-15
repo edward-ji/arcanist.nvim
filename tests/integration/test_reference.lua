@@ -187,11 +187,11 @@ end
 
 T[':write refuses when the pre-write conflict check times out'] = function()
     child.capture_notify()
-    child.lua([[require('arcanist').setup({ conduit_timeout = 50 })]])
+    child.lua([[require('arcanist').setup({ conduit_timeout = 2000 })]])
     child.fixture('call-conduit maniphest.search', {
         __sequence = {
             helpers.task_response({ id = 5, title = 'Fix bug' }),
-            { __control = { delay_ms = 500 } }, -- outlives conduit_timeout; killed
+            { __control = { delay_ms = 4000 } }, -- outlives conduit_timeout; killed
         },
     })
 
@@ -206,12 +206,12 @@ end
 
 T[':write warns (but keeps the edit) when the post-write refresh times out'] = function()
     child.capture_notify()
-    child.lua([[require('arcanist').setup({ conduit_timeout = 50 })]])
+    child.lua([[require('arcanist').setup({ conduit_timeout = 2000 })]])
     child.fixture('call-conduit maniphest.search', {
         __sequence = {
             helpers.task_response({ id = 5, title = 'Fix bug' }),
             helpers.task_response({ id = 5, title = 'Fix bug' }),
-            { __control = { delay_ms = 500 } }, -- the refresh call; killed
+            { __control = { delay_ms = 4000 } }, -- the refresh call; killed
         },
     })
     child.fixture('call-conduit maniphest.edit', { object = { id = 5 } })
