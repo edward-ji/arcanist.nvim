@@ -1,9 +1,8 @@
 -- Drives arcanist.inline against the fake `arc`: the "text" preset's live
 -- conceal/description tracking (add, remove, duplicate occurrences, cursor
 -- reveal), the enable/disable/toggle API, and the "render" side (a custom
--- function preset, and the bundled "snacks" preset's missing-dependency
--- warning -- the real snacks.nvim is not available in this harness, so the
--- happy path through it isn't covered here).
+-- function preset, and the bundled "snacks" preset, both with a pinned
+-- snacks.nvim and without it).
 
 local helpers = dofile('tests/integration/helpers.lua')
 
@@ -287,6 +286,60 @@ T['an unknown file.inline.render preset name reports a clear error'] = function(
 
     local log = child.notifications()
     eq(log[#log].msg, 'arcanist.nvim: file.inline.render: unknown preset "not-a-real-preset"')
+end
+
+--- Whether `path`'s buffer has a "snacks" image preview drawn: snacks
+--- draws one as a grid of placeholder characters in virtual lines, and a
+--- placement it considers hidden keeps its extmark with those lines blank.
+--- @param path string
+--- @return boolean
+local function preview_drawn(path)
+    return child.lua_get(string.format(
+        [[(function()
+            local ns = vim.api.nvim_create_namespace('snacks.image')
+            local marks = vim.api.nvim_buf_get_extmarks(vim.fn.bufnr(%q), ns, 0, -1, { details = true })
+            return vim.inspect(marks):find(vim.fn.nr2char(0x10EEEE), 1, true) ~= nil
+        end)()]],
+        path
+    ))
+end
+
+T['image previews in two comments are still drawn after switching between them'] = function()
+    if vim.fn.executable('magick') == 0 and vim.fn.executable('identify') == 0 then
+        MiniTest.skip('snacks.image needs ImageMagick to read an image')
+    end
+    -- A headless child has no terminal for snacks.image to detect; have it draw as if in kitty.
+    child.lua(string.format(
+        [[
+            vim.env.SNACKS_KITTY = '1'
+            vim.opt.rtp:prepend(%q)
+            require('snacks').setup({ image = { enabled = true } })
+            require('arcanist').setup({ file = { inline = { render = 'snacks' } } })
+        ]],
+        helpers.snacks_path()
+    ))
+    child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 491 }))
+    child.fixture('download', { file = vim.fn.getcwd() .. '/tests/integration/fixtures/duck.png' })
+
+    local first, second = child.dir .. '/first.remarkup', child.dir .. '/second.remarkup'
+    for _, path in ipairs({ first, second }) do
+        local f = assert(io.open(path, 'w'))
+        f:write('The crash:\n{F123}\n')
+        f:close()
+    end
+
+    local function visit(path)
+        child.cmd('edit ' .. path)
+        child.wait_until(function()
+            return preview_drawn(path)
+        end)
+        -- snacks redraws a placement on a debounce after its buffer gets a window.
+        child.lua('vim.wait(50)')
+        eq(preview_drawn(path), true)
+    end
+    visit(first)
+    visit(second)
+    visit(first)
 end
 
 T['render = "snacks" without snacks.nvim warns once, not once per reference'] = function()

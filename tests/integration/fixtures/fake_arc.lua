@@ -164,7 +164,8 @@ elseif subcommand == 'download' then
         os.exit(1)
     end
     local out = assert(io.open(part, 'wb'))
-    out:write(response.bytes or '')
+    -- `file`: real binary content, which JSON can't carry.
+    out:write(response.file and vim.fn.readblob(response.file) or response.bytes or '')
     if response.seconds then
         os.execute('sleep ' .. response.seconds) -- a download that takes a while
     end

@@ -183,14 +183,16 @@ local function snacks_preset(spec)
         on_update_pre = track,
     })
 
-    local augroup = vim.api.nvim_create_augroup('arcanist.inline.snacks.' .. anchor, { clear = true })
+    local autocmds = {} --- @type integer[]
     local closed = false
     local function close()
         if closed then
             return
         end
         closed = true
-        pcall(vim.api.nvim_del_augroup_by_id, augroup)
+        for _, id in ipairs(autocmds) do
+            pcall(vim.api.nvim_del_autocmd, id)
+        end
         pcall(vim.api.nvim_buf_del_extmark, spec.buf, anchor_ns, anchor)
         -- `placement:close()` deletes the image in the terminal straight away,
         -- ahead of the redraw that clears its placeholder cells: one frame of
@@ -222,8 +224,7 @@ local function snacks_preset(spec)
 
     -- Re-show the placement whenever this buffer gets a window again (e.g.
     -- switching back to it after visiting another buffer).
-    vim.api.nvim_create_autocmd('BufWinEnter', {
-        group = augroup,
+    autocmds[#autocmds + 1] = vim.api.nvim_create_autocmd('BufWinEnter', {
         buffer = spec.buf,
         callback = function()
             vim.schedule(function()
@@ -233,8 +234,7 @@ local function snacks_preset(spec)
     })
     -- Also on edits, not just `on_update_pre`: snacks drops a placement
     -- whose stale row is past the buffer's end before that hook runs.
-    vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
-        group = augroup,
+    autocmds[#autocmds + 1] = vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
         buffer = spec.buf,
         callback = function()
             if track(placement) then

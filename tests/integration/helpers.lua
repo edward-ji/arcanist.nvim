@@ -144,6 +144,18 @@ function Helpers.new_child()
     return child
 end
 
+--- A pinned snacks.nvim, cloned into deps/ on first use (like
+--- tests/init.lua's mini.test), for the "snacks" inline preset's cases.
+--- @return string path
+function Helpers.snacks_path()
+    local version = 'v2.31.0'
+    local path = vim.fn.getcwd() .. '/deps/snacks.nvim-' .. version
+    if not vim.uv.fs_stat(path) then
+        vim.fn.system({ 'git', 'clone', '--depth', '1', '--branch', version, 'https://github.com/folke/snacks.nvim', path })
+    end
+    return path
+end
+
 --- The `dateModified` a fixture object has unless a test says otherwise:
 --- 2026-09-21T14:13:20Z.
 Helpers.MODIFIED = 1790000000
