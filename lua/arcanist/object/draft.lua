@@ -35,6 +35,25 @@ local function resolved(path)
     return vim.fn.resolve(vim.fs.normalize(path))
 end
 
+--- Whether opening a draft should check its object on the server.
+--- @return boolean
+function M.check_on_open()
+    return config().enabled and config().check_on_open
+end
+
+--- Whether finding a draft stale should ask rather than only say so.
+--- @return boolean
+function M.prompt_on_stale()
+    return config().enabled and config().prompt_on_stale
+end
+
+--- Whether `path`, a buffer name, is a file under the drafts directory.
+--- @param path string
+--- @return boolean
+function M.contains(path)
+    return vim.startswith(path, resolved(config().dir) .. '/')
+end
+
 --- The on-disk path a draft for `ref` ("T123", "w/some/slug/") lives at.
 --- Normalized (`~`, `//` and symlinks resolved -- see `resolved`) so it
 --- compares equal to the name Neovim gives the buffer after `:edit`.

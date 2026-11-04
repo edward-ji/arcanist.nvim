@@ -228,8 +228,8 @@ on it is an ordinary file:
     :w                    a normal local write. Nothing is sent.
     :ArcWrite             pushes to Phorge (see |:ArcWrite|). The identity
                           line on the last line names the object.
-    :e arcanist://T123    reopens the draft straight from disk, no network --
-                          so unpushed edits survive closing Neovim.
+    :e arcanist://T123    reopens the draft straight from disk -- so unpushed
+                          edits survive closing Neovim.
     :e! arcanist://T123   refetches from the server and overwrites the draft.
 
 The picker, |gf| and `:ArcList` still open `arcanist://T123`; that name just
@@ -246,6 +246,31 @@ anyway. A push that lands moves the line up to the
 object's new time, leaving the draft modified for your next `:w`. Wiki
 documents have no such line -- Phorge does not report when one changed -- so
 a wiki draft is pushed unchecked.
+
+Opening a draft involves no network, so by default you learn the object moved
+only when `:ArcWrite` stops. Set |arcanist-config-drafts.check_on_open| to hear
+about it as you open the draft instead. The check makes the same comparison
+against "Last Modified:", in the background, and warns if the object moved on;
+the draft is left as it is, for `:e! arcanist://T123` to refetch or |:ArcWrite|
+to push. Switching to a draft's already-loaded buffer with |:buffer| or a
+window command is not an open, and checks nothing.
+
+Both checks only say so by default. Set
+|arcanist-config-drafts.prompt_on_stale| to be asked with |confirm()| instead:
+
+    On open               replace the buffer with the server's version. This
+                          is an ordinary edit: |u| undoes it, and the file
+                          does not change until you `:w`.
+    On `:ArcWrite`        overwrite the server's version, as `:ArcWrite!` does.
+
+The default answer does neither. If you have left the buffer or are no longer
+in Normal mode when the check on open finishes, you get the warning instead.
+
+The check on open says nothing if the draft already matches the server in
+every field a push could send, whatever moved the object's time. `:ArcWrite`
+on such a draft sends nothing and moves "Last Modified:" up, leaving the draft
+modified for your next `:w`. A comment on a draft that does differ still reads
+as a change, since a draft keeps no copy of what it was taken from.
 
 ==============================================================================
 4. FIELDS                                                    *arcanist-fields*
@@ -639,6 +664,8 @@ works without it. These are the defaults: >lua
         drafts = {
             enabled = false,
             dir = vim.fn.stdpath('data') .. '/arcanist',
+            check_on_open = false,
+            prompt_on_stale = false,
         },
         file = {
             open = nil,
@@ -696,6 +723,21 @@ drafts.enabled ~
 drafts.dir ~
     Directory the draft files live in. Defaults to a subdirectory of
     |stdpath()| "data".
+
+                                        *arcanist-config-drafts.check_on_open*
+drafts.check_on_open ~
+    Whether opening an existing draft fetches its object and warns if it
+    changed on the server since the draft's "Last Modified:" line. Off by
+    default, so opening a draft needs no network. Nothing to compare means no
+    request: a wiki draft, or one with that line deleted. See
+    |arcanist-drafts|.
+
+                                      *arcanist-config-drafts.prompt_on_stale*
+drafts.prompt_on_stale ~
+    Whether finding a draft stale asks with |confirm()| instead of only saying
+    so: on open (with |arcanist-config-drafts.check_on_open|), whether to
+    replace the draft; on |:ArcWrite|, whether to overwrite the server's
+    version. Off by default. See |arcanist-drafts|.
 
                                                     *arcanist-config-file.open*
 file.open ~

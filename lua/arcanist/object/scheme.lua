@@ -5,6 +5,7 @@
 -- under the cursor (via arcanist.reference's 'includeexpr' hook), or
 -- `:ArcWrite`.
 
+local document = require('arcanist.object.document')
 local draft = require('arcanist.object.draft')
 local fields = require('arcanist.object.fields')
 local notify = require('arcanist.notify')
@@ -66,6 +67,107 @@ local function scheme_buffer(bufnr, scheme)
     end
 end
 
+--- What draft buffer `bufnr` holds, and the "Last Modified:" time dating it.
+--- @param bufnr integer
+--- @param handler table one of HANDLERS' values
+--- @param ref string
+--- @return table<string, string>? values
+--- @return string? last_modified
+local function read_draft(bufnr, handler, ref)
+    local values = fields.parse(handler.fields, vim.api.nvim_buf_get_lines(bufnr, 0, -1, false))
+    return values, values and (document.last_modified_of(bufnr, ref, values.last_modified))
+end
+
+--- Whether a field a push could send differs between `values` and the server's
+--- `obj`. A comment moves `dateModified` without changing any of them.
+--- @param handler table one of HANDLERS' values
+--- @param values table<string, string>
+--- @param obj table
+--- @return boolean
+local function differs_from_server(handler, values, obj)
+    local current = fields.raw_values(handler.fields, obj)
+    for _, field in ipairs(handler.fields) do
+        local raw = values[field.key]
+        if field.write and raw ~= nil and fields.changed(field, current[field.key], raw) then
+            return true
+        end
+    end
+    return false
+end
+
+--- Tell the user draft buffer `bufnr`'s object moved on: a message, kept within
+--- 'v:echospace' at 80 columns so that landing mid-typing can't stop at
+--- hit-enter, or with `prompt_on_stale` an offer to replace the draft. Someone
+--- who has left the
+--- buffer or is mid-edit by the time the fetch lands gets the message rather
+--- than a prompt grabbing their keys.
+---
+--- Replacing is an ordinary edit of the buffer rather than `:e!`: the prompt
+--- appears unbidden and `y` is a common first key, so a stray answer must be
+--- undoable and must leave the file alone.
+--- @param bufnr integer
+--- @param handler table one of HANDLERS' values
+--- @param obj table
+--- @param ref string
+--- @param last_modified string
+local function report_stale_draft(bufnr, handler, obj, ref, last_modified)
+    if not draft.prompt_on_stale() or vim.api.nvim_get_current_buf() ~= bufnr or vim.fn.mode() ~= 'n' then
+        notify.warn(ref .. ' changed on the server')
+        return
+    end
+
+    local question = "%s changed on the server since %s.\nReplace this draft with the server's version?"
+    if notify.confirm(string.format(question, ref, last_modified)) then
+        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, fields.render(handler.fields, obj))
+        notify.info(string.format('%s replaced; :w to save it, u to undo', ref))
+    end
+end
+
+--- Report if the object draft buffer `bufnr` names changed on the server since
+--- its "Last Modified:", in a field the draft disagrees with it on. A draft
+--- with no such line has nothing to compare, so it costs no request.
+--- @param bufnr integer
+local function check_draft(bufnr)
+    local prefix, key = document.identity_of(bufnr)
+    if not prefix then
+        return
+    end
+    local handler = types.get(prefix)
+    local ref = handler.format(key)
+    local _, dated = read_draft(bufnr, handler, ref)
+    if not dated then
+        return
+    end
+
+    types.fetch(handler, key, function(obj, err)
+        if not vim.api.nvim_buf_is_loaded(bufnr) then
+            return
+        end
+        if err then
+            notify.warn(string.format('could not check %s for changes: %s', ref, err))
+            return
+        end
+        if not obj then
+            notify.warn(string.format('%s no longer exists on the server', ref))
+            return
+        end
+        -- Read again: a push while this was in flight moves the date up.
+        local values, last_modified = read_draft(bufnr, handler, ref)
+        if
+            last_modified
+            and obj.fields.dateModified
+            and types.iso8601(obj.fields.dateModified) > last_modified
+            and differs_from_server(handler, values, obj)
+        then
+            report_stale_draft(bufnr, handler, obj, ref, last_modified)
+        end
+    end)
+end
+
+--- True while `redirect_to_draft` opens a draft: it decides about the check
+--- itself, so the BufReadPost that open fires leaves it alone.
+local redirecting = false
+
 --- Hand `bufnr` -- an "arcanist://<ref>" buffer whose BufReadCmd just fired --
 --- over to `ref`'s draft file. The draft is a plain Remarkup file, so from
 --- here on `:w` is an ordinary local write and the object lives on only in the
@@ -76,10 +178,15 @@ end
 --- a draft buffer that is already open first, so the reopen reads the new
 --- file rather than switching back to the stale, possibly-modified buffer --
 --- switching to an existing buffer never reloads it.
+---
+--- `seeded` says the file was just written from a fresh fetch, so there is
+--- nothing to check. Otherwise the check runs here rather than off BufReadPost
+--- because a draft buffer that is already loaded doesn't fire one.
 --- @param bufnr integer
 --- @param ref string
 --- @param force boolean
-local function redirect_to_draft(bufnr, ref, force)
+--- @param seeded boolean
+local function redirect_to_draft(bufnr, ref, force, seeded)
     vim.bo[bufnr].bufhidden = 'wipe'
     local path = draft.path(ref)
     vim.schedule(function()
@@ -96,7 +203,15 @@ local function redirect_to_draft(bufnr, ref, force)
                 end
             end
         end
-        vim.cmd('keepalt edit ' .. vim.fn.fnameescape(path))
+        redirecting = true
+        local ok, err = pcall(vim.cmd, 'keepalt edit ' .. vim.fn.fnameescape(path))
+        redirecting = false
+        if not ok then
+            error(err, 0)
+        end
+        if not seeded and draft.check_on_open() then
+            check_draft(vim.api.nvim_get_current_buf())
+        end
     end)
 end
 
@@ -105,9 +220,9 @@ end
 --- the editor while a buffer loads; only `:w` blocks.
 ---
 --- With drafts on, an "arcanist://" buffer is never a resting buffer: an
---- existing draft is opened straight from disk with no network (`:e`), and
---- otherwise the fetched object is written to the draft file and the buffer
---- handed to it. `:e!` (`overwrite`) skips the existing draft and refetches.
+--- existing draft is opened straight from disk (`:e`), and otherwise the
+--- fetched object is written to the draft file and the buffer handed to it.
+--- `:e!` (`overwrite`) skips the existing draft and refetches.
 ---
 --- Progress and failures are reported through `vim.notify` rather than
 --- written into the buffer: a buffer holding the text "Loading T1..." looks
@@ -122,7 +237,7 @@ local function load_reference(bufnr, handler, prefix, key, overwrite)
     local ref = handler.format(key)
 
     if draft.enabled() and not overwrite and draft.exists(ref) then
-        redirect_to_draft(bufnr, ref, false)
+        redirect_to_draft(bufnr, ref, false, false)
         return
     end
 
@@ -168,7 +283,7 @@ local function load_reference(bufnr, handler, prefix, key, overwrite)
                 notify.err(write_err)
                 return
             end
-            redirect_to_draft(bufnr, ref, overwrite)
+            redirect_to_draft(bufnr, ref, overwrite, true)
             return
         end
 
@@ -255,6 +370,17 @@ function M.setup()
             local handler = types.resolve_handler(prefix, args.match, 'open')
             if handler then
                 load_reference(args.buf, handler, prefix, key, vim.v.cmdbang == 1)
+            end
+        end,
+    })
+
+    -- A draft reached without going through its "arcanist://" name: `:e` on
+    -- the path, a session restore.
+    vim.api.nvim_create_autocmd('BufReadPost', {
+        group = augroup,
+        callback = function(args)
+            if not redirecting and draft.check_on_open() and draft.contains(vim.api.nvim_buf_get_name(args.buf)) then
+                check_draft(args.buf)
             end
         end,
     })

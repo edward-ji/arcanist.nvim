@@ -24,6 +24,11 @@ local M = {}
 --- `:w` is a plain local write, `:ArcWrite` pushes to Phorge, and the draft
 --- survives across sessions.
 --- @field dir string Directory the draft files live in.
+--- @field check_on_open boolean Fetch the object when a draft opens, and warn
+--- if it changed on the server since the draft's "Last Modified:".
+--- @field prompt_on_stale boolean Ask with `confirm()` when a check finds a
+--- draft stale, instead of only saying so: on open, whether to replace the
+--- draft; on `:ArcWrite`, whether to overwrite the server's version.
 
 --- @class arcanist.FileInfo
 --- @field monogram string The file's monogram, e.g. "F123".
@@ -122,6 +127,8 @@ local default_config = {
     drafts = {
         enabled = false,
         dir = vim.fn.stdpath('data') .. '/arcanist',
+        check_on_open = false,
+        prompt_on_stale = false,
     },
     file = {
         open = nil,

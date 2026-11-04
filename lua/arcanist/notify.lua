@@ -31,4 +31,16 @@ function M.err(msg)
     notify(vim.log.levels.ERROR, msg)
 end
 
+--- Ask a yes/no question, defaulting to no. On yes the prompt is cleared: a
+--- message printed under it would stop at hit-enter.
+--- @param msg string
+--- @return boolean
+function M.confirm(msg)
+    if vim.fn.confirm(msg, '&Yes\n&No', 2) ~= 1 then
+        return false
+    end
+    vim.cmd('redraw')
+    return true
+end
+
 return M

@@ -3,6 +3,7 @@
 
 local conduit = require('arcanist.arc.conduit')
 local document = require('arcanist.object.document')
+local draft = require('arcanist.object.draft')
 local fields = require('arcanist.object.fields')
 local notify = require('arcanist.notify')
 local types = require('arcanist.object.types')
@@ -323,6 +324,14 @@ function M.push(bufnr, handler, prefix, key, lines, force)
 
     if #transactions == 0 then
         notify.info(ref_name .. ': no changes to update')
+        -- Matching the server's copy is as good as being taken from it, so
+        -- whatever moved its date (a comment) must not read as a conflict later.
+        if last_modified and fresh_obj and fresh_obj.fields.dateModified then
+            local server_date = types.iso8601(fresh_obj.fields.dateModified)
+            if server_date > last_modified then
+                document.set_last_modified(bufnr, ref_name, server_date)
+            end
+        end
         if is_own then
             vim.bo[bufnr].modified = false
         end
@@ -332,8 +341,16 @@ function M.push(bufnr, handler, prefix, key, lines, force)
     -- Blocking Conduit calls follow; say so before the UI freezes, not
     -- after. nvim_echo (what vim.notify's default handler calls) flushes to
     -- the message area synchronously, before this function's own call
-    -- returns, so this is visible before the wait.
-    notify.info('updating ' .. ref_name .. '...')
+    -- returns, so this is visible before the wait. With a baseline the check
+    -- below is itself one of those calls; without one it has already been
+    -- fetched for, and may yet stop to ask, so nothing is under way until
+    -- it passes.
+    local function announce()
+        notify.info('updating ' .. ref_name .. '...')
+    end
+    if baseline then
+        announce()
+    end
 
     -- Skipped entirely with `force` (":w!"/":ArcWrite!") -- the round-trip
     -- exists to catch a conflict, and force means overwrite regardless of
@@ -346,14 +363,27 @@ function M.push(bufnr, handler, prefix, key, lines, force)
         local err
         if not fresh_obj then
             fresh_obj, err = fetch_current(handler, key, ref_name)
+            if err then
+                notify.err(err)
+                return false
+            end
         end
-        err = err or check_drift(fresh_obj, handler, prefix, key, ref_name, baseline, last_modified)
+        err = check_drift(fresh_obj, handler, prefix, key, ref_name, baseline, last_modified)
         if err then
-            notify.err(err)
-            return false
+            if baseline or not draft.prompt_on_stale() then
+                notify.err(err)
+                return false
+            end
+            local question = "%s changed on the server since %s.\nOverwrite the server's version with this text?"
+            if not notify.confirm(string.format(question, ref_name, last_modified)) then
+                return false
+            end
         end
     end
 
+    if not baseline then
+        announce()
+    end
     local applied, apply_err = apply(handler, key, transactions, fresh_obj)
     if not applied then
         return fail(apply_err)
