@@ -2,6 +2,7 @@
 -- line that ends it ("Maniphest Task: T123") and the "Last Modified:" line
 -- under that, which dates the text for the staleness check a push makes.
 
+local fields = require('arcanist.object.fields')
 local types = require('arcanist.object.types')
 
 local M = {}
@@ -110,6 +111,32 @@ function M.last_modified_of(bufnr, ref_name, raw)
         return pushed.value
     end
     return raw
+end
+
+--- The server's `obj` dated later than `last_modified`, as text comparable with
+--- it, or nil if it isn't.
+--- @param obj table
+--- @param last_modified string
+--- @return string?
+function M.moved_since(obj, last_modified)
+    local date = obj.fields.dateModified and types.iso8601(obj.fields.dateModified)
+    return date and date > last_modified and date or nil
+end
+
+--- Whether text dated `last_modified` and holding `values` has fallen behind
+--- the server's `obj`. The date says whether anything happened at all, and the
+--- fields whether it is anything a push could touch: a comment moves the date
+--- and no field. Without a copy of what the text started from, a field differing
+--- may be the user's own edit, so an edited draft reads as behind once the date
+--- moves for any reason.
+--- @param handler table one of HANDLERS' values
+--- @param obj table
+--- @param values table<string, string>
+--- @param last_modified string
+--- @return boolean
+function M.is_stale(handler, obj, values, last_modified)
+    return M.moved_since(obj, last_modified) ~= nil
+        and fields.differs(handler.fields, fields.raw_values(handler.fields, obj), values)
 end
 
 --- Rewrite `bufnr`'s "Last Modified:" line to `value`, and remember it for

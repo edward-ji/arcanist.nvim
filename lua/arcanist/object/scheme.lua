@@ -78,23 +78,6 @@ local function read_draft(bufnr, handler, ref)
     return values, values and (document.last_modified_of(bufnr, ref, values.last_modified))
 end
 
---- Whether a field a push could send differs between `values` and the server's
---- `obj`. A comment moves `dateModified` without changing any of them.
---- @param handler table one of HANDLERS' values
---- @param values table<string, string>
---- @param obj table
---- @return boolean
-local function differs_from_server(handler, values, obj)
-    local current = fields.raw_values(handler.fields, obj)
-    for _, field in ipairs(handler.fields) do
-        local raw = values[field.key]
-        if field.write and raw ~= nil and fields.changed(field, current[field.key], raw) then
-            return true
-        end
-    end
-    return false
-end
-
 --- Tell the user draft buffer `bufnr`'s object moved on: a message, kept within
 --- 'v:echospace' at 80 columns so that landing mid-typing can't stop at
 --- hit-enter, or with `prompt_on_stale` an offer to replace the draft. Someone
@@ -153,12 +136,7 @@ local function check_draft(bufnr)
         end
         -- Read again: a push while this was in flight moves the date up.
         local values, last_modified = read_draft(bufnr, handler, ref)
-        if
-            last_modified
-            and obj.fields.dateModified
-            and types.iso8601(obj.fields.dateModified) > last_modified
-            and differs_from_server(handler, values, obj)
-        then
+        if last_modified and document.is_stale(handler, obj, values, last_modified) then
             report_stale_draft(bufnr, handler, obj, ref, last_modified)
         end
     end)

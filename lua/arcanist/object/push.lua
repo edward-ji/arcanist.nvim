@@ -110,39 +110,35 @@ end
 
 --- The staleness guard: refuse the push if the server's copy `obj` moved on
 --- since the buffer's text was taken from it -- compared field by field
---- against `baseline`, or by `dateModified` against `last_modified` without
---- one. The message refusing the push, or nil.
+--- against `baseline`, or with `document.is_stale` without one. The message
+--- refusing the push, or nil.
 --- @param obj table
 --- @param handler table one of HANDLERS' values
 --- @param prefix string
 --- @param key integer|string
 --- @param ref_name string
+--- @param values table<string, string> from `fields.parse`
 --- @param baseline table?
 --- @param last_modified string?
 --- @return string? err
-local function check_drift(obj, handler, prefix, key, ref_name, baseline, last_modified)
-    -- Compared field by field rather than by dateModified, which has
-    -- one-second resolution and moves for a write that changed nothing.
-    -- Fields with no `write` are left out: a write cannot reach them, so
-    -- a change to one is not a change this write could lose.
+local function check_drift(obj, handler, prefix, key, ref_name, values, baseline, last_modified)
     if baseline then
-        local current = fields.raw_values(handler.fields, obj)
-        for _, field in ipairs(handler.fields) do
-            if field.write and fields.changed(field, baseline.values[field.key], current[field.key]) then
-                -- `:e` alone won't work here -- the buffer is modified, so Vim
-                -- refuses with E37 -- and `:e!` discards the edits, hence the
-                -- nudge to save them off somewhere first. `!` overwrites the
-                -- server's version instead, same as any other Vim write.
-                return string.format(
-                    '%s changed on the server since it was loaded. Your edits are still here; '
-                        .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
-                        .. 'to overwrite the server\'s version',
-                    ref_name
-                )
-            end
+        -- A baseline settles it, with no date to consult: dateModified has
+        -- one-second resolution, so going by it first would miss an edit made
+        -- in the same second as the load, and a wiki document has none at all.
+        if fields.differs(handler.fields, baseline.values, fields.raw_values(handler.fields, obj)) then
+            -- `:e` alone won't work here -- the buffer is modified, so Vim
+            -- refuses with E37 -- and `:e!` discards the edits, hence the
+            -- nudge to save them off somewhere first. `!` overwrites the
+            -- server's version instead, same as any other Vim write.
+            return string.format(
+                '%s changed on the server since it was loaded. Your edits are still here; '
+                    .. ':w {file} to keep a copy, then :e! to reload -- or :w!/:ArcWrite! '
+                    .. 'to overwrite the server\'s version',
+                ref_name
+            )
         end
-    elseif obj.fields.dateModified and types.iso8601(obj.fields.dateModified) > last_modified then
-        -- No fields to compare, so dateModified is all there is.
+    elseif document.is_stale(handler, obj, values, last_modified) then
         return string.format(
             '%s changed on the server since %s. Your edits are still here; '
                 .. ':w {file} to keep a copy, then :e! %s to refetch -- or :ArcWrite! '
@@ -326,11 +322,9 @@ function M.push(bufnr, handler, prefix, key, lines, force)
         notify.info(ref_name .. ': no changes to update')
         -- Matching the server's copy is as good as being taken from it, so
         -- whatever moved its date (a comment) must not read as a conflict later.
-        if last_modified and fresh_obj and fresh_obj.fields.dateModified then
-            local server_date = types.iso8601(fresh_obj.fields.dateModified)
-            if server_date > last_modified then
-                document.set_last_modified(bufnr, ref_name, server_date)
-            end
+        local moved_to = last_modified and fresh_obj and document.moved_since(fresh_obj, last_modified)
+        if moved_to then
+            document.set_last_modified(bufnr, ref_name, moved_to)
         end
         if is_own then
             vim.bo[bufnr].modified = false
@@ -368,7 +362,7 @@ function M.push(bufnr, handler, prefix, key, lines, force)
                 return false
             end
         end
-        err = check_drift(fresh_obj, handler, prefix, key, ref_name, baseline, last_modified)
+        err = check_drift(fresh_obj, handler, prefix, key, ref_name, values, baseline, last_modified)
         if err then
             if baseline or not draft.prompt_on_stale() then
                 notify.err(err)

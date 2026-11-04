@@ -443,4 +443,20 @@ function M.changed(field, loaded, raw)
     return field.write.changed(loaded, raw)
 end
 
+--- Whether a field a push could send differs between `values` and `base`. A
+--- field absent from `values` had its label deleted, which sends nothing.
+--- @param fields arcanist.Field[]
+--- @param base table<string, string>
+--- @param values table<string, string>
+--- @return boolean
+function M.differs(fields, base, values)
+    for _, field in ipairs(fields) do
+        local raw = values[field.key]
+        if field.write and raw ~= nil and M.changed(field, base[field.key], raw) then
+            return true
+        end
+    end
+    return false
+end
+
 return M
