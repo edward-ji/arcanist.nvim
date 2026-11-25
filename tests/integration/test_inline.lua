@@ -118,6 +118,59 @@ T['typing a new reference live-adds a placement'] = function()
     eq(#text_extmarks(), 2)
 end
 
+T['a delayed file lookup follows a reference moved by an edit or server update'] = function()
+    child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
+    child.fixture('call-conduit file.search', {
+        __control = {
+            delay_ms = 300,
+            value = helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }),
+        },
+    })
+
+    child.cmd('enew')
+    child.api.nvim_buf_set_lines(0, 0, -1, false, { '{F123}' })
+    child.lua([[vim.bo.filetype = 'remarkup']])
+    child.api.nvim_buf_set_lines(0, 0, -1, false, { '', '{F123}' })
+    wait_for_marks(1)
+
+    local marks = text_extmarks()
+    local conceal_row
+    for _, mark in ipairs(marks) do
+        if mark[4].conceal then
+            conceal_row = mark[2]
+        end
+    end
+    eq(conceal_row, 1)
+end
+
+T['delayed lookups for a repeated reference moved by an edit each keep their own occurrence'] = function()
+    child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
+    child.fixture('call-conduit file.search', {
+        __control = {
+            delay_ms = 300,
+            value = helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }),
+        },
+    })
+
+    child.cmd('enew')
+    child.api.nvim_buf_set_lines(0, 0, -1, false, { '{F123}', '{F123}' })
+    child.lua([[vim.bo.filetype = 'remarkup']])
+    child.api.nvim_buf_set_lines(0, 0, 0, false, { '' })
+    wait_for_marks(4)
+
+    -- Filter on `conceal`, not on a missing `virt_text`: the cursor follows
+    -- the inserted line onto row 1, which reveals that reference and strips
+    -- its description mark's virt_text too.
+    local conceal_rows = {}
+    for _, mark in ipairs(text_extmarks()) do
+        if mark[4].conceal then
+            conceal_rows[#conceal_rows + 1] = mark[2]
+        end
+    end
+    table.sort(conceal_rows)
+    eq(conceal_rows, { 1, 2 })
+end
+
 T['deleting a reference live-removes its placement'] = function()
     child.lua([[require('arcanist').setup({ file = { inline = { text = true } } })]])
     child.fixture('call-conduit file.search', helpers.file_response({ name = 'duck.png', size = 1500, alt = 'duck.png (320x200 px, 1 KB)' }))
