@@ -90,9 +90,21 @@ end
 --- 0-indexed -- the whole "{F123, ...}" for a braced embed, opening "{"
 --- through closing "}", or just the bare monogram for an unbraced one.
 --- @param text string The description to show, e.g. `info.alt`.
---- @return arcanist.TextState
+--- @return arcanist.TextState? nil when `embed_range` no longer fits the
+--- buffer (an edit or reload since it was captured), placing nothing.
 local function place_text(buf, monogram, embed_range, text)
     local sr, sc, er, ec = embed_range[1], embed_range[2], embed_range[3], embed_range[4]
+    local line_count = vim.api.nvim_buf_line_count(buf)
+    if sr < 0 or er < sr or er >= line_count then
+        return nil
+    end
+    local start_line = vim.api.nvim_buf_get_lines(buf, sr, sr + 1, false)[1]
+    local end_line = vim.api.nvim_buf_get_lines(buf, er, er + 1, false)[1]
+    if not start_line or not end_line or sc < 0 or ec < 0
+        or sc > #start_line or ec > #end_line
+        or (sr == er and sc > ec) then
+        return nil
+    end
 
     -- Two extmarks, not one: `virt_text_pos = "inline"` always anchors at
     -- its own mark's *start*, and a single mark's `conceal` range and its
@@ -119,19 +131,26 @@ local function place_text(buf, monogram, embed_range, text)
     --
     -- `invalidate` on both: deleting the reference's line would otherwise
     -- slide them onto the next line for the frame before `sync_text` runs.
-    local conceal_id = vim.api.nvim_buf_set_extmark(buf, text_ns, sr, sc, {
+    local conceal_ok, conceal_id = pcall(vim.api.nvim_buf_set_extmark, buf, text_ns, sr, sc, {
         end_row = er,
         end_col = ec,
         conceal = '',
         invalidate = true,
     })
-    local text_id = vim.api.nvim_buf_set_extmark(buf, text_ns, er, ec, {
+    if not conceal_ok then
+        return nil
+    end
+    local text_ok, text_id = pcall(vim.api.nvim_buf_set_extmark, buf, text_ns, er, ec, {
         virt_text = { { text, 'Conceal' } },
         virt_text_pos = 'inline',
         priority = TEXT_PRIORITY,
         right_gravity = false,
         invalidate = true,
     })
+    if not text_ok then
+        pcall(vim.api.nvim_buf_del_extmark, buf, text_ns, conceal_id)
+        return nil
+    end
 
     return { monogram = monogram, conceal_id = conceal_id, text_id = text_id, text = text, revealed = false }
 end
@@ -229,6 +248,18 @@ local function clear_text(buf)
         close_text_state(buf, st)
     end
     r.text = nil
+end
+
+--- `reference.monograms_in(buf)`, memoized per changedtick: lookups that
+--- resolve together would otherwise each re-parse the whole buffer.
+--- @param buf integer
+local function live_refs(buf)
+    local r = state.rec(buf)
+    local tick = vim.api.nvim_buf_get_changedtick(buf)
+    if not r.live_refs or r.live_refs.tick ~= tick then
+        r.live_refs = { tick = tick, refs = require('arcanist.reference').monograms_in(buf) }
+    end
+    return r.live_refs.refs
 end
 
 --- Diff `buf`'s current set of references against `text`'s own tracked
@@ -347,15 +378,50 @@ local function sync_text(buf)
                 if st.closed or not vim.api.nvim_buf_is_valid(buf) then
                     return -- superseded, removed, or the buffer is gone
                 end
-                local text = info and (info.alt or info.name)
-                if not text then
-                    close_text_state(buf, st) -- nothing to show; drop the slot
+                local function drop()
+                    close_text_state(buf, st)
                     state.remove_where(state.bufs[buf] and state.bufs[buf].text, function(e)
                         return e == st
                     end)
-                    return
                 end
-                local placed = place_text(buf, ref.monogram, ref.embed_range, text)
+                local text = info and (info.alt or info.name)
+                if not text then
+                    return drop() -- nothing to show; drop the slot
+                end
+                -- `ref.embed_range` was captured when the lookup started;
+                -- edits since then may have moved it. Rebind to the live
+                -- occurrence at the same range if there is one, else the
+                -- first same-monogram occurrence no other placement already
+                -- conceals -- without that check, two pending lookups for a
+                -- repeated monogram could both fall back onto one occurrence.
+                local taken = {}
+                for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, text_ns, 0, -1, { details = true })) do
+                    if mark[4].conceal and not mark[4].invalid then
+                        taken[mark[2] .. ':' .. mark[3]] = true
+                    end
+                end
+                local current_ref
+                for _, live_ref in ipairs(live_refs(buf)) do
+                    local live_range = live_ref.embed_range
+                    if live_ref.monogram == ref.monogram
+                        and not taken[live_range[1] .. ':' .. live_range[2]] then
+                        if live_range[1] == ref.embed_range[1]
+                            and live_range[2] == ref.embed_range[2]
+                            and live_range[3] == ref.embed_range[3]
+                            and live_range[4] == ref.embed_range[4] then
+                            current_ref = live_ref
+                            break
+                        end
+                        current_ref = current_ref or live_ref
+                    end
+                end
+                if not current_ref then
+                    return drop()
+                end
+                local placed = place_text(buf, current_ref.monogram, current_ref.embed_range, text)
+                if not placed then
+                    return drop()
+                end
                 st.conceal_id, st.text_id, st.text, st.revealed = placed.conceal_id, placed.text_id, placed.text, false
                 if buf == vim.api.nvim_get_current_buf() then
                     sync_text_reveal(buf)
