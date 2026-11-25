@@ -140,6 +140,24 @@ local function render(buf, incremental)
                         return e == st
                     end)
                 end
+                -- `ref.range` was captured when the fetch started; an edit
+                -- or reload since may have moved or removed it. Place only
+                -- if it is still live, else drop the slot and re-render so
+                -- the reference (if any) is placed fresh at its current
+                -- range -- the fetch is cached by then.
+                local live = false
+                for _, live_ref in ipairs(reference.monograms_in(buf)) do
+                    if live_ref.monogram == ref.monogram and vim.deep_equal(live_ref.range, ref.range) then
+                        live = true
+                        break
+                    end
+                end
+                if not live then
+                    state.remove_where(state.bufs[buf] and state.bufs[buf].placed, function(e)
+                        return e == st
+                    end)
+                    return M.schedule(buf, true)
+                end
                 st.path, st.info = path, info
                 st.handle = place({ buf = buf, range = ref.range, path = path, info = info, options = ref.options })
             end)
