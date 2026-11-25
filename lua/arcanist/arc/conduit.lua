@@ -12,22 +12,34 @@ local function cmd(method)
     return { 'arc', 'call-conduit', method, '--' }
 end
 
+--- @param obj vim.SystemCompleted
+--- @return boolean
+local function is_timeout_result(obj)
+    -- Neovim versions report a terminated blocking process differently:
+    -- SIGKILL normally arrives as 124/9, while SIGTERM may arrive as 143/15
+    -- or 124/15 depending on the Neovim/runner version.
+    local stderr = obj.stderr or ''
+    return (obj.code == 124 and (obj.signal == 9 or obj.signal == 15))
+        or (obj.code == 143 and obj.signal == 15)
+        or stderr:find("Nvim: Caught deadly signal 'SIGTERM'", 1, true) ~= nil
+        or stderr:find("Nvim: Caught deadly signal 'SIGKILL'", 1, true) ~= nil
+end
+
 --- Turn a finished `vim.system()` result into this module's
 --- `(ok, result, err)` shape.
 ---
 --- `arc` reports Conduit-level failures (bad parameters, missing objects)
 --- with exit code 0 and an `error`/`errorMessage` pair in its JSON output,
 --- not a nonzero exit code. A blocking call that hit its timeout arrives
---- here as code 124 with empty stderr (`vim.system():wait()`'s own
---- convention), so that's called out explicitly rather than reported as a
---- bare exit code.
+--- as a version-dependent terminated process result, so that is called out
+--- explicitly rather than reported as a bare exit-code error.
 --- @param obj vim.SystemCompleted
 --- @return boolean ok
 --- @return any result
 --- @return string? err
 local function decode_result(obj)
     if obj.code ~= 0 then
-        if obj.code == 124 and obj.signal == 9 then
+        if is_timeout_result(obj) then
             return false, nil, 'arc call-conduit timed out'
         end
         local msg = arc.error_message(obj.stderr)

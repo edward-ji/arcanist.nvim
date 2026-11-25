@@ -83,7 +83,7 @@ if subcommand == 'call-conduit' then
     -- `{__control = {delay_ms=, value=}}` (same reserved key as `upload`)
     -- opts into a delay -- for testing `config.conduit_timeout`'s blocking
     -- `call_sync` path, which kills a still-running call past its timeout
-    -- (see conduit.lua's decode_result: code 124 + SIGKILL).
+    -- (see conduit.lua's decode_result timeout handling).
     local method = arg[2]
     local key = 'call-conduit ' .. method
     local stdin = io.read('*a') or ''
